@@ -1,0 +1,8 @@
+*.png
+*.zip
+*.ply
+bunny
+.vscode
+build
+raytrace
+*.webm
