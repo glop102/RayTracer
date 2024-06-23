@@ -67,3 +67,18 @@ std::shared_ptr<BRDMaterial> MetalShiny =
     0.0, //specular_tightness
     0.05 //roughness
 );
+
+
+//===================================================================
+// PureTransparentMaterial
+//===================================================================
+PureTransparentMaterial::PureTransparentMaterial(const double& refractive_index)
+:refractive_index(refractive_index)
+{}
+bool PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
+    attenuation = White;
+    double ri = rec.front_face ? (1.0/refractive_index) : refractive_index;
+    outgoing_bounce.direction = rec.normal.refract(incident.direction,ri).normalize();
+    outgoing_bounce.origin = rec.intersection_point;
+    return true;
+}
