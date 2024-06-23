@@ -102,12 +102,13 @@ double Vector3::length()const{
 double Vector3::length_squared()const{
     return (this->x*this->x)+(this->y*this->y)+(this->z*this->z);
 }
-Vector3& Vector3::normalize(){
+Vector3 Vector3::normalize()const{
     double&& len = this->length();
-    this->x /= len;
-    this->y /= len;
-    this->z /= len;
-    return *this;
+    return {
+        x / len,
+        y / len,
+        z / len
+    };
 }
 Vector3 Vector3::unit_length()const{
     return std::move(this->operator/(this->length()));
@@ -206,6 +207,16 @@ Vector3 Vector3::reflect(const Vector3& incoming)const{
     return reflect_around_normal(*this,incoming);
 }
 
+Vector3 Vector3::refract_around_normal(const Vector3& normal, const Vector3& incoming, const double& refractive_index_ratio){
+    auto cos_theta = fmin((incoming*-1.0).dot(normal), 1.0);
+    Vector3 r_out_perp =  (incoming + (normal*cos_theta)) * refractive_index_ratio;
+    Vector3 r_out_parallel = normal * -sqrt(fabs(1.0 - r_out_perp.length_squared()));
+    return r_out_perp + r_out_parallel;
+}
+Vector3 Vector3::refract(const Vector3& incoming, const double& refractive_index_ratio)const{
+    return refract_around_normal(*this,incoming,refractive_index_ratio);
+}
+
 Vector3 Vector3::rotate(const Vector3& point, double radians)const{
     // https://suricrasia.online/blog/shader-functions/
     double sinrot,cosrot;
@@ -217,9 +228,9 @@ Vector3 Vector3::rotate(const Vector3& point, double radians)const{
 
 bool Vector3::near_zero()const{
     return
-        std::fabs(x) < std::numeric_limits<double>::epsilon()*3.0 &&
-        std::fabs(y) < std::numeric_limits<double>::epsilon()*3.0 &&
-        std::fabs(z) < std::numeric_limits<double>::epsilon()*3.0;
+        std::fabs(x) < std::numeric_limits<double>::epsilon()*15.0 &&
+        std::fabs(y) < std::numeric_limits<double>::epsilon()*15.0 &&
+        std::fabs(z) < std::numeric_limits<double>::epsilon()*15.0;
 }
 
 //===================================================================

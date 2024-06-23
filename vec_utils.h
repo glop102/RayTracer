@@ -28,7 +28,7 @@ class Vector3{
     Vector3 cross(const Vector3& other)const;
     double length()const;
     double length_squared()const;
-    Vector3& normalize();
+    Vector3 normalize()const;
     Vector3 unit_length()const;
 
     static Vector3 random();
@@ -41,6 +41,8 @@ class Vector3{
 
     static Vector3 reflect_around_normal(const Vector3& normal, const Vector3& incoming);
     Vector3 reflect(const Vector3& incoming)const;
+    static Vector3 refract_around_normal(const Vector3& normal, const Vector3& incoming, const double& refractive_index_ratio);
+    Vector3 refract(const Vector3& incoming, const double& refractive_index_ratio)const;
     // rotate a point around this vector as the rotation axis
     Vector3 rotate(const Vector3& point, double radians)const;
 

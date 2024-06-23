@@ -57,8 +57,8 @@ Ray Camera::_initial_pixel_ray(int x, int y, Vector3& screen_origin, Vector3& pi
 }
 
 Vector3 Camera::_calculate_screen_origin(){
-    up_direction.normalize();
-    look_direction.normalize();
+    up_direction = up_direction.normalize();
+    look_direction = look_direction.normalize();
     double viewport_width = (pixels->width()/(double)pixels->height()) * viewport_height;
     Vector3 left_direction = up_direction.cross(look_direction).normalize();
     Vector3 center_of_sensor = origin + (look_direction*focal_length);
@@ -120,7 +120,8 @@ void Camera::_scanline_thread_runner(const Hittable& scene, int y){
 
 Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth){
     HitRecord rec;
-    RealRange initial_allowed_range(std::numeric_limits<double>::epsilon()*10.0,Infinity);
+    // RealRange initial_allowed_range(std::numeric_limits<double>::epsilon()*10.0,Infinity);
+    RealRange initial_allowed_range(0.0001,Infinity);
     if(max_depth<=0){
         return Black;
     }else if(scene.hit(ray,initial_allowed_range,rec)){

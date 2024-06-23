@@ -27,3 +27,11 @@ class BRDMaterial:public Material{
 extern std::shared_ptr<BRDMaterial> AluminiumDull;
 extern std::shared_ptr<BRDMaterial> Mirror;
 extern std::shared_ptr<BRDMaterial> MetalShiny;
+
+class PureTransparentMaterial:public Material{
+    public:
+    double refractive_index;  //1.0 is Air, and higher values for other materials, notably glass is 1.5-1.7
+
+    PureTransparentMaterial(const double& refractive_index);
+    bool scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;
+};
