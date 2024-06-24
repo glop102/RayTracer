@@ -30,7 +30,9 @@ extern std::shared_ptr<BRDMaterial> MetalShiny;
 
 class PureTransparentMaterial:public Material{
     public:
-    double refractive_index;  //1.0 is Air, and higher values for other materials, notably glass is 1.5-1.7
+    // RELATIVE!!! Refractive index. If you have a material embedded in another material, then this should be the ratio between those materials
+    //1.0 is Air, and higher values for other materials, notably glass is 1.5-1.7, water is 1.33
+    double refractive_index;
 
     PureTransparentMaterial(const double& refractive_index);
     bool scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;

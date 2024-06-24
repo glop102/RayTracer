@@ -70,25 +70,14 @@ bool Sphere::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)con
         return false;
     }
     auto sqrtd = sqrt(discriminant);
-    //attempt to make it branchless - failure, but an attempt
-    auto root_sub = (h-sqrtd)/a;
-    auto root_add = (h+sqrtd)/a;
-    bool root_sub_valid = allowed_distance.surrounds(root_sub);
-    bool root_add_valid = allowed_distance.surrounds(root_add);
-    //Check that the intersection is within our bounds
-    if(!root_sub_valid && !root_add_valid){
-        return false;
-    }
-    auto root = root_sub ? root_sub : root_add;
-    // double root = root_sub*root_sub_valid;
 
-    // auto root = (h-sqrtd)/a;
-    // if(!allowed_distance.surrounds(root)){
-    //     root = (h+sqrtd)/a;
-    //     if(!allowed_distance.surrounds(root)){
-    //         return false;
-    //     }
-    // }
+    auto root = (h-sqrtd)/a;
+    if(!allowed_distance.surrounds(root)){
+        root = (h+sqrtd)/a;
+        if(!allowed_distance.surrounds(root)){
+            return false;
+        }
+    }
 
     // shrink the far plane to keep ensuring we only get closer hits for any further entities found
     allowed_distance.max = root;
@@ -99,7 +88,7 @@ bool Sphere::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)con
     rec.normal = (rec.intersection_point - center) / radius;
     if(ray.direction.dot(rec.normal)>0.0){
         rec.front_face = false;
-        rec.normal *= -1.0;
+        rec.normal = rec.normal.reverse();
     }else{
         rec.front_face = true;
     }
