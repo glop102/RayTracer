@@ -77,8 +77,15 @@ PureTransparentMaterial::PureTransparentMaterial(const double& refractive_index)
 {}
 bool PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
     attenuation = White;
-    double ri = rec.front_face ? (1.0/refractive_index) : refractive_index;
-    outgoing_bounce.direction = rec.normal.refract(incident.direction,ri).normalize();
+    double ri_ratio = rec.front_face ? (1.0/refractive_index) : refractive_index;
+    double cos_theta = fmin(incident.direction.reverse().dot(rec.normal), 1.0);
+    double sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
+
+    bool can_refract = (ri_ratio * sin_theta) <= 1.0;
+    if(can_refract)
+        outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
+    else
+        outgoing_bounce.direction = rec.normal.reflect(incident.direction);
     outgoing_bounce.origin = rec.intersection_point;
     return true;
 }

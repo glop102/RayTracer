@@ -30,6 +30,7 @@ class Vector3{
     double length_squared()const;
     Vector3 normalize()const;
     Vector3 unit_length()const;
+    Vector3 reverse()const;
 
     static Vector3 random();
     static Vector3 random(double min, double max);

@@ -100,7 +100,7 @@ double Vector3::length()const{
     return sqrt(length_squared());
 }
 double Vector3::length_squared()const{
-    return (this->x*this->x)+(this->y*this->y)+(this->z*this->z);
+    return (x*x)+(y*y)+(z*z);
 }
 Vector3 Vector3::normalize()const{
     double&& len = this->length();
@@ -112,6 +112,11 @@ Vector3 Vector3::normalize()const{
 }
 Vector3 Vector3::unit_length()const{
     return std::move(this->operator/(this->length()));
+}
+Vector3 Vector3::reverse()const{
+    return {
+        -x,-y,-z
+    };
 }
 
 Vector3 Vector3::random(){
@@ -160,26 +165,26 @@ Vector3 Vector3::random_unit_vector(){
 
     // This is an alternative method that randomly attempts to generate one and then check its length
     // It is slightly faster than the above - on 10 million runs, ~477ms versus ~484ms
-    while(true){
-        Vector3 v = Vector3::random(-1,1);
-        double len_sq = v.length_squared();
-        if(len_sq<1.0){
-            return v / sqrt(len_sq);
-        }
-    }
+    // while(true){
+    //     Vector3 v = Vector3::random(-1,1);
+    //     double len_sq = v.length_squared();
+    //     if(len_sq<1.0){
+    //         return v / sqrt(len_sq);
+    //     }
+    // }
 
     // Using tan as a correction factor for picking a random point within a box should make it an even distribution
-    // return Vector3{
-    //     tan(random_neg_pos_one(gen)),
-    //     tan(random_neg_pos_one(gen)),
-    //     tan(random_neg_pos_one(gen))
-    // }.normalize();
+    return Vector3{
+        tan(random_neg_pos_one(gen)),
+        tan(random_neg_pos_one(gen)),
+        tan(random_neg_pos_one(gen))
+    }.normalize();
 }
 
 Vector3 Vector3::random_vector_on_hemisphere(const Vector3& normal){
     Vector3 v = random_unit_vector();
     if(v.dot(normal)<=0.0)
-        return v*-1.0;
+        return v.reverse();
     return std::move(v);
 }
 
@@ -208,10 +213,17 @@ Vector3 Vector3::reflect(const Vector3& incoming)const{
 }
 
 Vector3 Vector3::refract_around_normal(const Vector3& normal, const Vector3& incoming, const double& refractive_index_ratio){
-    auto cos_theta = fmin((incoming*-1.0).dot(normal), 1.0);
+    auto cos_theta = fmin(1.0, incoming.reverse().dot(normal));
     Vector3 r_out_perp =  (incoming + (normal*cos_theta)) * refractive_index_ratio;
     Vector3 r_out_parallel = normal * -sqrt(fabs(1.0 - r_out_perp.length_squared()));
     return r_out_perp + r_out_parallel;
+
+    // Slower validation code - the refraction looks totally wrong so far.
+    // auto incoming_theta = acos(cos_theta);
+    // auto outgoing_theta = incoming_theta * refractive_index_ratio;
+    // auto diff_theta = incoming_theta - outgoing_theta;
+    // auto rot_axis = normal.cross(incoming);
+    // return rot_axis.rotate(incoming,diff_theta);
 }
 Vector3 Vector3::refract(const Vector3& incoming, const double& refractive_index_ratio)const{
     return refract_around_normal(*this,incoming,refractive_index_ratio);

@@ -141,8 +141,10 @@ Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max
         // a skybox that is actually blue up top, white at the horizon, and void underneith
         if(y>0){
             return Vector3::lerp( White, BlueSky, y);
+        }else if(y>-0.5){
+            return White*(1.0+(y*2));
         }else{
-            return White*(1.0+y);
+            return Black;
         }
     }
 }
