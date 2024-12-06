@@ -16,18 +16,18 @@ Triangle::Triangle(Point3 p1, Point3 p2, Point3 p3, std::shared_ptr<Material> ma
     normal = (p2-p1).cross(p3-p1).normalize();
 }
 
-Vector3 Triangle::min()const{
+BBox Triangle::bbox()const{
     return {
-        std::min(std::min(p1.x,p2.x),p3.x),
-        std::min(std::min(p1.y,p2.y),p3.y),
-        std::min(std::min(p1.z,p2.z),p3.z)
-    };
-}
-Vector3 Triangle::max()const{
-    return {
-        std::max(std::max(p1.x,p2.x),p3.x),
-        std::max(std::max(p1.y,p2.y),p3.y),
-        std::max(std::max(p1.z,p2.z),p3.z)
+        {
+            std::min(std::min(p1.x,p2.x),p3.x),
+            std::min(std::min(p1.y,p2.y),p3.y),
+            std::min(std::min(p1.z,p2.z),p3.z)
+        },
+        {
+            std::max(std::max(p1.x,p2.x),p3.x),
+            std::max(std::max(p1.y,p2.y),p3.y),
+            std::max(std::max(p1.z,p2.z),p3.z)
+        }
     };
 }
 
@@ -45,18 +45,18 @@ Sphere::Sphere(Point3 center, double radius,std::shared_ptr<Material> mat):
     center(center),radius(radius),material(mat)
 {}
 
-Vector3 Sphere::min()const{
+BBox Sphere::bbox()const{
     return {
-        center.x - radius,
-        center.y - radius,
-        center.z - radius
-    };
-}
-Vector3 Sphere::max()const{
-    return {
-        center.x + radius,
-        center.y + radius,
-        center.z + radius
+        {
+            center.x - radius,
+            center.y - radius,
+            center.z - radius
+        },
+        {
+            center.x + radius,
+            center.y + radius,
+            center.z + radius
+        }
     };
 }
 

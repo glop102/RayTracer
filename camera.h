@@ -22,6 +22,7 @@ class Camera{
     int ongoing_image_export = 0;
 
     protected:
+    Vector3 viewport_up,viewport_right; // Calculated at the start of the render based on the look and up directions
     Ray _initial_pixel_ray(int x, int y, Vector3& screen_origin, Vector3& pixel_delta_x, Vector3& pixel_delta_y, double x_variance=0.0, double y_variance=0.0)const;
     Vector3 _calculate_screen_origin();
     Vector3 _calculate_pixel_delta_x()const;

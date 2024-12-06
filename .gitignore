@@ -6,3 +6,4 @@ bunny
 build
 raytrace
 *.webm
+perf.data*

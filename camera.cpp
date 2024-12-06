@@ -19,7 +19,7 @@ Camera::~Camera(){
 
 void Camera::look_at(const Vector3 &point){
     this->look_direction = (point-origin).normalize();
-    this->up_direction = look_direction.cross(up_direction).cross(look_direction).normalize();
+    // this->up_direction = look_direction.cross(up_direction).cross(look_direction).normalize();
 }
 
 void Camera::write_to_png(std::string filename)const{
@@ -57,23 +57,18 @@ Ray Camera::_initial_pixel_ray(int x, int y, Vector3& screen_origin, Vector3& pi
 }
 
 Vector3 Camera::_calculate_screen_origin(){
-    up_direction = up_direction.normalize();
-    look_direction = look_direction.normalize();
-    double viewport_width = (pixels->width()/(double)pixels->height()) * viewport_height;
-    Vector3 left_direction = up_direction.cross(look_direction).normalize();
     Vector3 center_of_sensor = origin + (look_direction*focal_length);
     if(inverted_y)
-        return center_of_sensor + (left_direction*(viewport_width)/2.0) + (up_direction*(viewport_height/2.0));
-    return center_of_sensor + (left_direction*(viewport_width)/2.0) + (up_direction*(viewport_height/-2.0));
+        return center_of_sensor + (viewport_right.reverse()*(viewport_width())/2.0) + (viewport_up*(viewport_height/2.0));
+    return center_of_sensor + (viewport_right.reverse()*(viewport_width())/2.0) + (viewport_up*(viewport_height/-2.0));
 }
 Vector3 Camera::_calculate_pixel_delta_x()const{
-    Vector3 right_direction = look_direction.cross(up_direction).normalize(); // points to the right of the sensor
-    return  right_direction* (viewport_width()/(pixels->width()-1));
+    return  viewport_right* (viewport_width()/(pixels->width()-1));
 }
 Vector3 Camera::_calculate_pixel_delta_y()const{
     if(inverted_y)
-        return up_direction*(-1 * viewport_height/(pixels->height()-1)) ;
-    return up_direction*(viewport_height/(pixels->height()-1)) ;
+        return viewport_up*(-1 * viewport_height/(pixels->height()-1));
+    return viewport_up*(viewport_height/(pixels->height()-1));
 }
 
 double Camera::viewport_width()const{
@@ -81,6 +76,10 @@ double Camera::viewport_width()const{
 }
 
 void Camera::render(const Hittable& scene){
+    viewport_right = look_direction.cross(up_direction).normalize();
+    viewport_up = viewport_right.cross(look_direction).normalize();
+    look_direction = look_direction.normalize();
+
     // Spawns multiple threads to saturate a CPU
     // Each thread locks the atomic to safely pick what is the next line that will be rendered
     // The real work of the ray tracing is done in the function call in the lambda
@@ -131,8 +130,9 @@ Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max
             return Black;
         }
         Color incoming_color = _cast_ray_for_color(next_bounce, scene, max_depth-1 );
+        Color reflected_color = attenuation * incoming_color;
         
-        return attenuation * incoming_color;
+        return reflected_color + rec.material->extra_light(ray,rec,reflected_color);
     }else{
         // Lets simulate a light blue skybox gradient if we completly miss.
         // It is ever so slightly faster to normalize just our Y component since that is all we need

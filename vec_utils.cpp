@@ -82,6 +82,12 @@ Vector3& Vector3::operator/=(double scale){
     this->z /= scale;
     return *this;
 }
+double Vector3::operator[](const int idx)const{
+    return data[idx];
+}
+double& Vector3::operator[](const int idx){
+    return data[idx];
+}
 double Vector3::dot(const Vector3& other)const{
     return (this->x * other.x)
         + (this->y * other.y)
@@ -218,7 +224,7 @@ Vector3 Vector3::refract_around_normal(const Vector3& normal, const Vector3& inc
     Vector3 r_out_parallel = normal * -sqrt(fabs(1.0 - r_out_perp.length_squared()));
     return r_out_perp + r_out_parallel;
 
-    // Slower validation code - the refraction looks totally wrong so far.
+    // Slower validation code
     // auto incoming_theta = acos(cos_theta);
     // auto outgoing_theta = incoming_theta * refractive_index_ratio;
     // auto diff_theta = incoming_theta - outgoing_theta;
@@ -254,4 +260,37 @@ Vector3 Ray::at(double distanceScale)const{
 void Ray::debug_print()const{
     print("{:.2f} {:.2f} {:.2f}->",origin.x,origin.y,origin.z);
     print("{:.2f} {:.2f} {:.2f}  ",direction.x,direction.y,direction.z);
+}
+
+
+//===================================================================
+// BBox
+//===================================================================
+
+double BBox::half_surface_area()const{
+    Vector3 dv = max-min;
+    return (dv.x*(dv.z+dv.y))+(dv.z*dv.y);
+}
+RealRange BBox::intsection_distance(const Ray& ray)const{
+    // Taken from https://tavianator.com/2011/ray_box.html
+    auto dmin = (min - ray.origin)/ray.direction;
+    auto dmax = (max - ray.origin)/ray.direction;
+
+    Vector3 dsmin,dsmax; // sorted versions ie min is the min of both axes
+    for(int i=0; i<3; i++){
+        dsmin[i] = std::min(dmin[i],dmax[i]);
+    }
+    for(int i=0; i<3; i++){
+        dsmax[i] = std::max(dmin[i],dmax[i]);
+    }
+
+    double tmin = std::numeric_limits<double>::lowest();
+    double tmax = std::numeric_limits<double>::max();
+    for(int i=0; i<3; i++){
+        tmin = std::max(tmin,dsmin[i]);
+    }
+    for(int i=0; i<3; i++){
+        tmax = std::min(tmax,dsmax[i]);
+    }
+    return {tmin,tmax};
 }

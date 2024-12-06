@@ -1,9 +1,11 @@
 #include "materials.h"
 
 bool Material::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
- return false;
+    return false;
 }
-
+Color Material::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
+    return Black;
+}
 
 // BRDMaterial::BRDMaterial(const BRDMaterial& other)
 // : diffuse(other.diffuse), specular(other.specular), emissive(other.emissive), specular_tightness(other.specular_tightness), roughness(other.roughness)
@@ -24,6 +26,10 @@ bool BRDMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& atte
 
     attenuation = Vector3::lerp(specular,diffuse, outgoing_bounce.direction.dot(rec.normal) );
     return true;
+}
+
+Color BRDMaterial::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
+    return emissive;
 }
 
 BRDMaterial BRDMaterial::random(){
@@ -82,10 +88,20 @@ bool PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec,
     double sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
 
     bool can_refract = (ri_ratio * sin_theta) <= 1.0;
-    if(can_refract)
-        outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
-    else
+    if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution(gen))
         outgoing_bounce.direction = rec.normal.reflect(incident.direction);
+    else
+        outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
     outgoing_bounce.origin = rec.intersection_point;
     return true;
+}
+double PureTransparentMaterial::reflectance(double cosine, double refraction_index) {
+    // Use Schlick's approximation for reflectance.
+    auto r0 = (1 - refraction_index) / (1 + refraction_index);
+    r0 = r0*r0;
+    return r0 + (1-r0)*pow((1 - cosine),5);
+}
+
+Color PureTransparentMaterial::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
+    return Black;
 }

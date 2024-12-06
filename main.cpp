@@ -69,6 +69,18 @@ void populate_sphere_crafted_test(HittableList& list){
         4.0,
         std::make_shared<PureTransparentMaterial>(1.5)
     ));
+    // Left - Glass hollow
+    list.add(std::make_shared<Sphere>(
+        Vector3{-8.0,4.0,0.0},
+        3.0,
+        std::make_shared<PureTransparentMaterial>(1.0/1.5)
+    ));
+    // Left - Glowing Light
+    // list.add(std::make_shared<Sphere>(
+    //     Vector3{-8.0,6.0,4.0},
+    //     0.5,
+    //     std::make_shared<BRDMaterial>(Black,Black,White,1.0,0.1)
+    // ));
 }
 
 int main(){
@@ -90,17 +102,16 @@ int main(){
     print("BVH Creation Time  {}\n",timer.duration());
     //Horizontal Rotation
     int number_frames = 120;
-    for(int frame=0; frame < number_frames; frame++){
-        // int frame = 1;
+    // for(int frame=0; frame < number_frames; frame++){
+        int frame = 58;
         viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
-        viewport.up_direction = y_pos;
         viewport.look_at(Vector3{0,0,0});
         timer.reset();
         // viewport.render(spheres);
         viewport.render(world);
         print("Frame: {} - {}\n",frame,ms_to_human(timer.duration()));
         viewport.threaded_write_to_png(std::format("video/{}.png",frame));
-    }
+    // }
 
     // viewport.write_to_png("output_bvh.png");
     // timer.reset();

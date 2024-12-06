@@ -1,5 +1,6 @@
 OBJ_DIR = build
-EXTRA_CXXOPTS = -std=c++20 -O2 -flto
+EXTRA_CXXOPTS = -std=c++20 -O3
+# -msse -msse2 -msse3 -mavx -mavx2
 LIBS = -lpng
 CXXFLAGS := ${CXXFLAGS} ${EXTRA_CXXOPTS}
 
@@ -9,7 +10,7 @@ OBJS = $(patsubst %.cpp,${OBJ_DIR}/%.o,$(SRCS))
 all: raytrace
 
 raytrace: ${OBJS}
-	$(CXX) $(OBJS) $(LIBS) -o $@ ${CXXFLAGS}
+	$(CXX) $(OBJS) $(LIBS) -o $@ ${CXXFLAGS} -flto
 
 ${OBJ_DIR}/%.o: %.cpp | ${OBJ_DIR}
 	$(CXX) -c $< -o $@ ${CXXFLAGS}
