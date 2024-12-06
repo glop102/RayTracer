@@ -8,6 +8,7 @@ class HitRecord;
 class Material{
     public:
     virtual bool scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;
+    virtual Color extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const;
 };
 
 class BRDMaterial:public Material{
@@ -21,6 +22,7 @@ class BRDMaterial:public Material{
     // BRDMaterial(const BRDMaterial& other);
     BRDMaterial(const Color& diffuse, const Color& specular, const Color& emissive, const double& specular_tightness, const double& roughness);
     bool scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;
+    Color extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const;
     static BRDMaterial random();
 };
 
@@ -36,4 +38,6 @@ class PureTransparentMaterial:public Material{
 
     PureTransparentMaterial(const double& refractive_index);
     bool scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;
+    Color extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const;
+    static double reflectance(double cosine, double refraction_index);
 };

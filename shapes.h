@@ -20,8 +20,7 @@ class Hittable{
     public:
     virtual ~Hittable() = default;
     virtual bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const = 0;
-    virtual Vector3 min() const = 0;
-    virtual Vector3 max() const = 0;
+    virtual BBox bbox() const = 0;
 };
 
 class Triangle:public Hittable{
@@ -33,8 +32,7 @@ class Triangle:public Hittable{
     Triangle(Point3 p1, Point3 p2, Point3 p3, std::shared_ptr<Material> mat);
 
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
-    Vector3 min()const;
-    Vector3 max()const;
+    BBox bbox()const;
 };
 
 class Sphere:public Hittable{
@@ -46,6 +44,5 @@ class Sphere:public Hittable{
     Sphere(Point3 center, double radius, std::shared_ptr<Material> mat);
 
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
-    Vector3 min()const;
-    Vector3 max()const;
+    BBox bbox()const;
 };

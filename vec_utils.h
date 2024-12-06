@@ -24,6 +24,8 @@ class Vector3{
     Vector3& operator-=(const Vector3& other);
     Vector3& operator*=(double);
     Vector3& operator/=(double);
+    double operator[](const int idx)const;
+    double& operator[](const int idx);
     double dot(const Vector3& other)const;
     Vector3 cross(const Vector3& other)const;
     double length()const;
@@ -57,6 +59,13 @@ class Ray{
     Vector3 direction;
     Vector3 at(double distanceScale)const;
     void debug_print()const;
+};
+
+class BBox{
+    public:
+    Point3 min,max;
+    double half_surface_area()const;
+    RealRange intsection_distance(const Ray& ray)const;
 };
 
 extern const Vector3 x_pos,y_pos,z_pos;
