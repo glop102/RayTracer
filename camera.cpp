@@ -111,17 +111,17 @@ void Camera::_scanline_thread_runner(const Hittable& scene, int y){
         Color accum = Black;
         for(int sample=0; sample<sampling_per_pixel; sample++){
             Ray ray = _initial_pixel_ray(x,y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
-            accum += _cast_ray_for_color(ray,scene, max_trace_depth);
+            accum += _cast_ray_for_color(ray,scene, max_trace_depth, White);
         }
         pixels->get_px(x,y) = accum / sampling_per_pixel;
     }
 }
 
-Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth){
+Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth, Color total_attenuation){
     HitRecord rec;
     // RealRange initial_allowed_range(std::numeric_limits<double>::epsilon()*10.0,Infinity);
     RealRange initial_allowed_range(0.0001,Infinity);
-    if(max_depth<=0){
+    if(max_depth<=0 || total_attenuation.length_squared()<0.0001){
         return Black;
     }else if(scene.hit(ray,initial_allowed_range,rec)){
         Color attenuation;
@@ -129,7 +129,7 @@ Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max
         if(! rec.material->scatter(ray,rec,attenuation,next_bounce)){
             return Black;
         }
-        Color incoming_color = _cast_ray_for_color(next_bounce, scene, max_depth-1 );
+        Color incoming_color = _cast_ray_for_color(next_bounce, scene, max_depth-1, attenuation * total_attenuation );
         Color reflected_color = attenuation * incoming_color;
         
         return reflected_color + rec.material->extra_light(ray,rec,reflected_color);
