@@ -111,40 +111,60 @@ void Camera::_scanline_thread_runner(const Hittable& scene, int y){
         Color accum = Black;
         for(int sample=0; sample<sampling_per_pixel; sample++){
             Ray ray = _initial_pixel_ray(x,y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
-            accum += _cast_ray_for_color(ray,scene, max_trace_depth, White);
+            accum += _cast_ray_for_color(ray,scene);
         }
         pixels->get_px(x,y) = accum / sampling_per_pixel;
     }
 }
 
-Color Camera::_cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth, Color total_attenuation){
-    HitRecord rec;
-    // RealRange initial_allowed_range(std::numeric_limits<double>::epsilon()*10.0,Infinity);
-    RealRange initial_allowed_range(0.0001,Infinity);
-    if(max_depth<=0 || total_attenuation.length_squared()<0.0001){
-        return Black;
-    }else if(scene.hit(ray,initial_allowed_range,rec)){
-        Color attenuation;
-        Ray next_bounce;
-        if(! rec.material->scatter(ray,rec,attenuation,next_bounce)){
-            return Black;
-        }
-        Color incoming_color = _cast_ray_for_color(next_bounce, scene, max_depth-1, attenuation * total_attenuation );
-        Color reflected_color = attenuation * incoming_color;
-        
-        return reflected_color + rec.material->extra_light(ray,rec,reflected_color);
-    }else{
-        // Lets simulate a light blue skybox gradient if we completly miss.
-        // It is ever so slightly faster to normalize just our Y component since that is all we need
-        auto y = ray.direction.y/ray.direction.length();
+Color simulated_skybox(const Ray& ray) {
+    // Lets simulate a light blue skybox gradient if we completly miss.
+    // It is ever so slightly faster to normalize just our Y component since that is all we need
+    auto y = ray.direction.y/ray.direction.length();
 
-        // a skybox that is actually blue up top, white at the horizon, and void underneith
-        if(y>0){
-            return Vector3::lerp( White, BlueSky, y);
-        }else if(y>-0.5){
-            return White*(1.0+(y*2));
-        }else{
-            return Black;
+    // a skybox that is actually blue up top, white at the horizon, and void underneith
+    if(y>0){
+        return Vector3::lerp( White, BlueSky, y);
+    }else if(y>-0.5){
+        return White * (1.0+(y*2));
+    }else{
+        return Black;
+    }
+}
+
+Color Camera::_cast_ray_for_color(Ray& ray, const Hittable& scene){
+    HitRecord rec;
+    Color total_attenuation = White;
+    Color accumulated_energy = Black;
+    int depth_left = this->max_trace_depth;
+    while (depth_left > 0 && total_attenuation.length_squared()>0.0000001){
+        // This gets remade every loop since the .hit() method will trim the allowed_range to find only closer hits as it goes
+        RealRange hit_allowed_range(0.0001,Infinity);
+        if(scene.hit(ray,hit_allowed_range,rec)){
+            depth_left--;
+            Color additional_attenuation;
+            Ray next_bounce;
+            rec.material->scatter(ray,rec,additional_attenuation,next_bounce);
+
+            accumulated_energy += total_attenuation * rec.material->extra_light(ray,rec,total_attenuation);
+            total_attenuation = total_attenuation * additional_attenuation;
+            ray = next_bounce;
+        } else {
+            accumulated_energy += total_attenuation * simulated_skybox(ray);
+            break;
         }
     }
+    // if (total_attenuation.length_squared()<=0.0000001) {
+    //     if (rec.material.get() && dynamic_cast<PureTransparentMaterial*>(rec.material.get())) {
+    //         printf("Last hit Transparent - ");
+    //     }
+    //     printf("Hit too much attenuation - %d\n", depth_left);
+    // }
+    // if (depth_left == 0) {
+    //     if (rec.material.get() && dynamic_cast<PureTransparentMaterial*>(rec.material.get())) {
+    //         printf("Last hit Transparent - ");
+    //     }
+    //     printf("Hit Max Depth\n");
+    // }
+    return accumulated_energy;
 }
