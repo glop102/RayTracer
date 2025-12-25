@@ -103,7 +103,7 @@ int main(){
     //Horizontal Rotation
     int number_frames = 120;
     // for(int frame=0; frame < number_frames; frame++){
-        int frame = 58;
+        int frame = 40; //58;
         viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
         viewport.look_at(Vector3{0,0,0});
         timer.reset();

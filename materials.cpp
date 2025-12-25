@@ -1,8 +1,6 @@
 #include "materials.h"
 
-bool Material::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
-    return false;
-}
+void Material::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{}
 Color Material::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
     return Black;
 }
@@ -14,18 +12,14 @@ BRDMaterial::BRDMaterial(const Color& diffuse, const Color& specular, const Colo
 : diffuse(diffuse), specular(specular), emissive(emissive), specular_tightness(specular_tightness), roughness(roughness)
 {}
 
-bool BRDMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
+void BRDMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
     Vector3 diffuse_cast = rec.normal + Vector3::random_unit_vector(); // lambertian diffusion
     Vector3 specular_cast = Vector3::reflect_around_normal(rec.normal,incident.direction);
-    outgoing_bounce.direction = Vector3::lerp(specular_cast,diffuse_cast,roughness).normalize();
-    if(outgoing_bounce.direction.near_zero()){
-        outgoing_bounce.direction = specular_cast;
-    }
 
+    outgoing_bounce.direction = Vector3::lerp(specular_cast,diffuse_cast,roughness).normalize();
     outgoing_bounce.origin = rec.intersection_point;
 
     attenuation = Vector3::lerp(specular,diffuse, outgoing_bounce.direction.dot(rec.normal) );
-    return true;
 }
 
 Color BRDMaterial::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
@@ -81,19 +75,19 @@ std::shared_ptr<BRDMaterial> MetalShiny =
 PureTransparentMaterial::PureTransparentMaterial(const double& refractive_index)
 :refractive_index(refractive_index)
 {}
-bool PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
+void PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
     attenuation = White;
     double ri_ratio = rec.front_face ? (1.0/refractive_index) : refractive_index;
     double cos_theta = fmin(incident.direction.reverse().dot(rec.normal), 1.0);
     double sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
 
     bool can_refract = (ri_ratio * sin_theta) <= 1.0;
-    if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution(gen))
+    if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution(gen)) {
         outgoing_bounce.direction = rec.normal.reflect(incident.direction);
-    else
+    } else {
         outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
+    }
     outgoing_bounce.origin = rec.intersection_point;
-    return true;
 }
 double PureTransparentMaterial::reflectance(double cosine, double refraction_index) {
     // Use Schlick's approximation for reflectance.
