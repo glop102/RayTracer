@@ -29,7 +29,7 @@ class Camera{
     Vector3 _calculate_pixel_delta_y()const;
 
     void _scanline_thread_runner(const Hittable& scene, int y);
-    Color _cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth);
+    Color _cast_ray_for_color(const Ray& ray, const Hittable& scene, int max_depth, Color total_attenuation);
 
     public:
     Camera(int px_width=1920, int px_height=1080, double focal_length=1.0, double viewport_height=2.0);
