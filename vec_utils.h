@@ -65,7 +65,7 @@ class BBox{
     public:
     Point3 min,max;
     double half_surface_area()const;
-    RealRange intsection_distance(const Ray& ray)const;
+    RealRange intersection_distance(const Ray& ray)const;
 };
 
 extern const Vector3 x_pos,y_pos,z_pos;

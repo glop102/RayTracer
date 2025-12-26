@@ -100,6 +100,7 @@ int main(){
     Stopwatch timer,totalTimer;
     BVHList world(spheres.objects);
     print("BVH Creation Time  {}\n",timer.duration());
+
     //Horizontal Rotation
     int number_frames = 120;
     // for(int frame=0; frame < number_frames; frame++){
