@@ -1,5 +1,5 @@
 OBJ_DIR = build
-EXTRA_CXXOPTS = -std=c++20 -O3
+EXTRA_CXXOPTS = -std=c++20 -O3 -freciprocal-math -fno-rounding-math
 # -msse -msse2 -msse3 -mavx -mavx2
 LIBS = -lpng
 CXXFLAGS := ${CXXFLAGS} ${EXTRA_CXXOPTS}

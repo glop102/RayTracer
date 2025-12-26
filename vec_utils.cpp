@@ -271,26 +271,30 @@ double BBox::half_surface_area()const{
     Vector3 dv = max-min;
     return (dv.x*(dv.z+dv.y))+(dv.z*dv.y);
 }
-RealRange BBox::intsection_distance(const Ray& ray)const{
+RealRange BBox::intersection_distance(const Ray& ray)const{
     // Taken from https://tavianator.com/2011/ray_box.html
+    // It is a specific impl of the SLAB method which bounds the direction in
+    // for every plane, and then finds the farthest/nearest intersections for the planes
+
+    // MAX and MIN start at the top here meaning absolute distance from the origin for the corners of the AABB
+    // dsmin and dsmax are then sorting the near/far for time-of-flight distances
     auto dmin = (min - ray.origin)/ray.direction;
     auto dmax = (max - ray.origin)/ray.direction;
 
     Vector3 dsmin,dsmax; // sorted versions ie min is the min of both axes
     for(int i=0; i<3; i++){
         dsmin[i] = std::min(dmin[i],dmax[i]);
-    }
-    for(int i=0; i<3; i++){
         dsmax[i] = std::max(dmin[i],dmax[i]);
     }
 
+    // Now that we know the distances for intersections for x/y/z, we can tell if the
+    // intersections on each plane makes sense for our ray
     double tmin = std::numeric_limits<double>::lowest();
     double tmax = std::numeric_limits<double>::max();
     for(int i=0; i<3; i++){
         tmin = std::max(tmin,dsmin[i]);
-    }
-    for(int i=0; i<3; i++){
         tmax = std::min(tmax,dsmax[i]);
     }
+
     return {tmin,tmax};
 }

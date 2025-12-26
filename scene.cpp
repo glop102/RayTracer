@@ -46,7 +46,8 @@ BBox HittableList::bbox()const{
 BVHList::BVHList(ObjList& world_objects,int max_depth)
 : max_depth_allowed(max_depth), objects(world_objects) {
     if(max_depth_allowed<=0 || objects.size() <= 1){
-        // Recursion end case of max bepth or only a single object
+        // Recursion end case of max depth or only a single object
+        // this should be the only case where left or right are null
         right = left = nullptr;
         if(objects.size()>=1){
             memoized_bbox = objects[0]->bbox();
@@ -55,7 +56,10 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
                 Vector3::min_accum(memoized_bbox.min,ob.min);
                 Vector3::max_accum(memoized_bbox.max,ob.max);
             }
-        } // else 0, so who cares what the memoized max/min is
+        } else {
+            // Make sure the bounding box is zero size to try to never have it get hit when we have no objects to hold
+            memoized_bbox.max = memoized_bbox.min = {0.0,0.0,0.0};
+        }
     } else if(objects.size() == 2) {
         //efficency case of two objects so there is no decision making of how to split them
         memoized_bbox = objects[0]->bbox();
@@ -147,10 +151,10 @@ std::pair<BVHList::ObjList, BVHList::ObjList> BVHList::minimal_surface_area_spli
 
 
 bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    auto t = memoized_bbox.intsection_distance(ray);
+    auto t = memoized_bbox.intersection_distance(ray);
 
-    if(t.max >= t.min && t.max > 0.0){
-        // The ray intersects our box
+    if(t.max >= t.min && t.max > 0.0 && t.max > allowed_distance.min && t.min < allowed_distance.max){
+        // The ray intersects our box or originates inside our box
         return hit_internal(ray,allowed_distance,rec);
     }else{
         //missed the box
@@ -159,9 +163,12 @@ bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)co
 }
 
 bool BVHList::hit_internal(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    // Check if we are a leaf node, so just a linear search through all the objects, likely only a few
     bool found_hit = false;
-    if(!(left&&right)){
+
+    // Check if we are a leaf node, so just a linear search through all the objects, likely only a few
+    // We can assume that leaf nodes will have no neighbor in left or right, and non-leaf nodes will have
+    // both left and right due to how the constructor works.
+    if (!left) {
         // copied the HittableList function
         for(int x = 0; x < objects.size(); x++){
             found_hit |= objects[x]->hit(ray,allowed_distance,rec);
@@ -170,10 +177,11 @@ bool BVHList::hit_internal(const Ray& ray, RealRange& allowed_distance, HitRecor
     }
 
     // Not a leaf node, determine which child box to recurse down into until we find a leaf
-    auto tleft =  left->memoized_bbox.intsection_distance(ray);
-    auto tright = right->memoized_bbox.intsection_distance(ray);
+    auto tleft  = left->memoized_bbox.intersection_distance(ray);
+    auto tright = right->memoized_bbox.intersection_distance(ray);
 
-    if(tleft.max < tright.max){ // test the closer box first to try to find a closer hit first and so we can skip testing the other box
+    // test the closer box first to try to find a closer hit first and so we can skip testing the other box
+    if(tleft.max < tright.max){
         if( tleft.min <= tleft.max && tleft.max >= allowed_distance.min && tleft.min <= allowed_distance.max ){
             found_hit |= left->hit_internal(ray,allowed_distance,rec);
         }
