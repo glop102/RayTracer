@@ -6,11 +6,6 @@ using std::make_shared;
 
 bool HittableList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
     bool found_hit = false;
-    // for(const auto& object : objects){
-    //     if(object->hit(ray,allowed_distance,rec)){
-    //         found_hit = true;
-    //     }
-    // }
     for(int x=0; x<objects.size(); x++){
         found_hit |= objects[x]->hit(ray,allowed_distance,rec);
     }
@@ -164,51 +159,67 @@ std::pair<BVHList::ObjList, BVHList::ObjList> BVHList::minimal_surface_area_spli
 
 
 bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    auto t = memoized_bbox.intersection_distance(ray);
+    std::vector<const BVHList*> stack;
+    stack.reserve(this->max_depth_allowed *2 +2);
+    // Convenient lambda to check if a given intersection distance range is actaully a hit (as a bool)
+    // Captures the allowed_distance which is modified in place by per-object hits
+    auto hits_aabb_dists = [&allowed_distance](RealRange& int_dists){
+        return
+        int_dists.max >= int_dists.min && // Check if the ray direction actually would hit the AABB
+        int_dists.max > allowed_distance.min && // And also need to check if the intersection is within our clipping range
+        int_dists.min < allowed_distance.max;
+    };
 
-    if(t.max >= t.min && t.max > 0.0 && t.max > allowed_distance.min && t.min < allowed_distance.max){
-        // The ray intersects our box or originates inside our box
-        return hit_internal(ray,allowed_distance,rec);
-    }else{
-        //missed the box
+    auto t = memoized_bbox.intersection_distance(ray);
+    if(!hits_aabb_dists(t)){
+        //missed the box - try the next in the stack
         return false;
     }
+
+    // lets get the stack set up by adding in ourselves and then start walking down the tree
+    stack.push_back(this);
+
+    bool found_hit = false;
+    while(!stack.empty()) {
+        const BVHList* next_to_check = stack.back();
+        stack.pop_back();
+
+        // Check if it is a leaf node and search its objects
+        if (next_to_check->isLeaf()) {
+            for(int x = 0; x < next_to_check->objects.size(); x++){
+                found_hit |= next_to_check->objects[x]->hit(ray,allowed_distance,rec);
+            }
+            // Go to the next item in the stack - this leaf has no children to add to the stack
+            continue;
+        }
+
+        // Not a leaf node, ecurse down into until we find a leaf
+        auto tleft  = next_to_check->left->memoized_bbox.intersection_distance(ray);
+        auto tright = next_to_check->right->memoized_bbox.intersection_distance(ray);
+
+        // check which AABB is closer to the ray orgin and leave that at the top of the stack
+        if(tleft.min < tright.min){
+            // Left is closer so put the right on before the left
+            if( hits_aabb_dists(tright) ){
+                stack.push_back(next_to_check->right);
+            }
+            if( hits_aabb_dists(tleft) ){
+                stack.push_back(next_to_check->left);
+            }
+        }else{
+            if( hits_aabb_dists(tleft) ){
+                stack.push_back(next_to_check->left);
+            }
+            if( hits_aabb_dists(tright) ){
+                stack.push_back(next_to_check->right);
+            }
+        }
+    }
+    return found_hit;
 }
 
-bool BVHList::hit_internal(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    bool found_hit = false;
-
-    // Check if we are a leaf node, so just a linear search through all the objects, likely only a few
+bool BVHList::isLeaf()const{
     // We can assume that leaf nodes will have no neighbor in left or right, and non-leaf nodes will have
     // both left and right due to how the constructor works.
-    if (!left) {
-        // copied the HittableList function
-        for(int x = 0; x < objects.size(); x++){
-            found_hit |= objects[x]->hit(ray,allowed_distance,rec);
-        }
-        return found_hit;
-    }
-
-    // Not a leaf node, determine which child box to recurse down into until we find a leaf
-    auto tleft  = left->memoized_bbox.intersection_distance(ray);
-    auto tright = right->memoized_bbox.intersection_distance(ray);
-
-    // test the closer box first to try to find a closer hit first and so we can skip testing the other box
-    if(tleft.min < tright.min){
-        if( tleft.min <= tleft.max && tleft.max >= allowed_distance.min && tleft.min <= allowed_distance.max ){
-            found_hit |= left->hit_internal(ray,allowed_distance,rec);
-        }
-        if( tright.min <= tright.max && tright.max >= allowed_distance.min && tright.min <= allowed_distance.max ){
-            found_hit |= right->hit_internal(ray,allowed_distance,rec);
-        }
-    }else{
-        if( tright.min <= tright.max && tright.max >= allowed_distance.min && tright.min <= allowed_distance.max ){
-            found_hit |= right->hit_internal(ray,allowed_distance,rec);
-        }
-        if( tleft.min <= tleft.max && tleft.max >= allowed_distance.min && tleft.min <= allowed_distance.max ){
-            found_hit |= left->hit_internal(ray,allowed_distance,rec);
-        }
-    }
-
-    return found_hit;
+    return !left;
 }
