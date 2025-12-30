@@ -194,7 +194,7 @@ bool BVHList::hit_internal(const Ray& ray, RealRange& allowed_distance, HitRecor
     auto tright = right->memoized_bbox.intersection_distance(ray);
 
     // test the closer box first to try to find a closer hit first and so we can skip testing the other box
-    if(tleft.max < tright.max){
+    if(tleft.min < tright.min){
         if( tleft.min <= tleft.max && tleft.max >= allowed_distance.min && tleft.min <= allowed_distance.max ){
             found_hit |= left->hit_internal(ray,allowed_distance,rec);
         }
