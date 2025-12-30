@@ -60,50 +60,55 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
             // Make sure the bounding box is zero size to try to never have it get hit when we have no objects to hold
             memoized_bbox.max = memoized_bbox.min = {0.0,0.0,0.0};
         }
-    } else if(objects.size() == 2) {
-        //efficency case of two objects so there is no decision making of how to split them
-        memoized_bbox = objects[0]->bbox();
-        BBox ob = objects[1]->bbox();
-        Vector3::min_accum(memoized_bbox.min,ob.min);
-        Vector3::max_accum(memoized_bbox.max,ob.max);
-        ObjList leftsplit(objects.begin(),objects.begin()+1);
-        ObjList rightsplit(objects.begin()+1,objects.end());
-        left = new BVHList(leftsplit,max_depth_allowed-1);
-        right = new BVHList(rightsplit,max_depth_allowed-1);
-        objects.clear(); // no reason to hold onto the objects list since we will never check them
     } else {
+        memoized_bbox = objects[0]->bbox();
+        for(int i=1; i<objects.size(); i++){
+            memoized_bbox.absorb(objects[i]->bbox());
+        }
+
+        // x-sort
         ObjList sorted(objects);
         std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.x < obj2->bbox().min.x;} );
-        BBox xleft,xright;
-        auto xslices = minimal_surface_area_split(sorted,xleft,xright);
-
-        std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.y < obj2->bbox().min.y;} );
-        BBox yleft,yright;
-        auto yslices = minimal_surface_area_split(sorted,yleft,yright);
+        BBox xleft_bbox,xright_bbox;
+        auto xslices = minimal_surface_area_split(sorted,xleft_bbox,xright_bbox);
         
+        // y-sort
+        std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.y < obj2->bbox().min.y;} );
+        BBox yleft_bbox,yright_bbox;
+        auto yslices = minimal_surface_area_split(sorted,yleft_bbox,yright_bbox);
+        
+        // z-sort
         std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.z < obj2->bbox().min.z;} );
-        BBox zleft,zright;
-        auto zslices = minimal_surface_area_split(sorted,zleft,zright);
+        BBox zleft_bbox,zright_bbox;
+        auto zslices = minimal_surface_area_split(sorted,zleft_bbox,zright_bbox);
 
         //we have our slices - so lets find the smallest
-        double xsize = xleft.half_surface_area() + xright.half_surface_area();
-        double ysize = yleft.half_surface_area() + yright.half_surface_area();
-        double zsize = zleft.half_surface_area() + zright.half_surface_area();
+        double xsize = (xslices.first.size()/4.0) * xleft_bbox.half_surface_area() + (xslices.second.size()/4.0) * xright_bbox.half_surface_area();
+        double ysize = (yslices.first.size()/4.0) * yleft_bbox.half_surface_area() + (yslices.second.size()/4.0) * yright_bbox.half_surface_area();
+        double zsize = (zslices.first.size()/4.0) * zleft_bbox.half_surface_area() + (zslices.second.size()/4.0) * zright_bbox.half_surface_area();
+        double smallest_size;
+        std::pair<BVHList::ObjList,BVHList::ObjList>* smallest_slices;
         if(xsize < ysize && xsize < zsize){
-            left = new BVHList(xslices.first,max_depth_allowed-1);
-            right = new BVHList(xslices.second,max_depth_allowed-1);
+            smallest_size = xsize;
+            smallest_slices = &xslices;
         }else if(ysize < zsize){
-            left = new BVHList(yslices.first,max_depth_allowed-1);
-            right = new BVHList(yslices.second,max_depth_allowed-1);
+            smallest_size = ysize;
+            smallest_slices = &yslices;
         }else{
-            left = new BVHList(zslices.first,max_depth_allowed-1);
-            right = new BVHList(zslices.second,max_depth_allowed-1);
+            smallest_size = zsize;
+            smallest_slices = &zslices;
         }
-        // i should be able to just use the xmin/max for all 3 branches since it describes the totallity of our objects?
-        Vector3::min_accum(xleft.min,xright.min);
-        Vector3::max_accum(xleft.max,xright.max);
-        memoized_bbox = xleft;
-        objects.clear(); // no reason to hold onto the objects list since we will never check them
+
+        // Check if we have something that doesn't make sense to break up or if we should continue recursing down
+        if (smallest_slices->first.size() == 0 || smallest_slices->second.size() == 0 || smallest_size >= (objects.size()/4.0) * memoized_bbox.half_surface_area()) {
+            // No subdivision happened so we are a leaf
+            // The objects are already assigned to our object so nothing left to do for it
+            left = right = nullptr;
+        } else {
+            objects.clear(); // no reason to hold onto the objects list since we will never check them
+            left = new BVHList(smallest_slices->first,max_depth-1);
+            right = new BVHList(smallest_slices->second,max_depth-1);
+        }
     }
 }
 
@@ -120,32 +125,40 @@ std::pair<BVHList::ObjList, BVHList::ObjList> BVHList::minimal_surface_area_spli
     //We are guarenteed two items in the objects list because the constructor is handling there being 0 or 1 items
     //But lets check anyways
     if(dividing_objects.size()<=1){
+        if(dividing_objects.size())
+            left = dividing_objects[0]->bbox();
         return std::make_pair<ObjList,ObjList>(ObjList(dividing_objects),ObjList());
     }
     //We assume that objects is already sorted in whatever way is sensible
     //So now we need to partition the list in half, and move that partition around until we find the minimal surface area
-    //Start by only taking in one element for each side and slowly accumulate objects
-    unsigned int leftidx = 0;
-    unsigned int rightidx = dividing_objects.size()-1;
-    left = dividing_objects[leftidx]->bbox();
-    right = dividing_objects[rightidx]->bbox();
+    //We want to try every single index as the splitting line and try to find one where the total surface area is minimized
+    unsigned int best_split = 0;
+    double best_split_area = std::numeric_limits<double>::max();
+    BBox testing_bbox_left,testing_bbox_right;
+    for( unsigned int split=1; split<dividing_objects.size(); split++ ){
+        // Left split
+        testing_bbox_left = dividing_objects[0]->bbox();
+        for(int i=1; i<split; i++){
+            testing_bbox_left.absorb(dividing_objects[i]->bbox());
+        }
+        // Right Split
+        testing_bbox_right = dividing_objects[split]->bbox();
+        for(int i=split+1; i<dividing_objects.size(); i++){
+            testing_bbox_right.absorb(dividing_objects[i]->bbox());
+        }
 
-    while(leftidx+1 < rightidx){
-        double left_bb_size = left.half_surface_area();
-        double right_bb_size = right.half_surface_area();
-        if(left_bb_size < right_bb_size){
-            leftidx ++;
-            auto obj_bbox = dividing_objects[leftidx]->bbox();
-            Vector3::min_accum(left.min,obj_bbox.min);
-            Vector3::max_accum(left.max,obj_bbox.max);
-        }else{
-            rightidx --;
-            auto obj_bbox = dividing_objects[rightidx]->bbox();
-            Vector3::min_accum(right.min,obj_bbox.min);
-            Vector3::max_accum(right.max,obj_bbox.max);
+        // The cost of a particular split should take into account how badly it is not evenly splitting the objects in the scene
+        // That is why we multiply the area cost by the number of objects still in that contained area
+        double testing_area_cost = (split / 4.0) * testing_bbox_left.half_surface_area() + ((dividing_objects.size() - split)/4.0) * testing_bbox_right.half_surface_area();
+        if (testing_area_cost < best_split_area) {
+            best_split_area = testing_area_cost;
+            best_split = split;
+            left = testing_bbox_left;
+            right = testing_bbox_right;
         }
     }
-    auto rightBegin = dividing_objects.begin()+rightidx;
+
+    auto rightBegin = dividing_objects.begin()+best_split;
     return std::make_pair<ObjList,ObjList>(std::vector(dividing_objects.begin(),rightBegin),std::vector(rightBegin,dividing_objects.end()));
 }
 

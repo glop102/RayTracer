@@ -298,3 +298,8 @@ RealRange BBox::intersection_distance(const Ray& ray)const{
 
     return {tmin,tmax};
 }
+
+void BBox::absorb(const BBox& other) {
+    Vector3::min_accum(this->min,other.min);
+    Vector3::max_accum(this->max,other.max);
+}

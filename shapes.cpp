@@ -61,6 +61,11 @@ BBox Sphere::bbox()const{
 }
 
 bool Sphere::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
+    // Cheaper bounding box check to weed out any misses early
+    auto t = this->bbox().intersection_distance(ray);
+    if(t.min > t.max || t.min > allowed_distance.max || t.max < allowed_distance.min)
+        return false;
+
     Vector3 oc = center - ray.origin;
     auto a = ray.direction.length_squared();
     auto h = ray.direction.dot(oc);
