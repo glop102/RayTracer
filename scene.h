@@ -24,14 +24,11 @@ class BVHList:public Hittable{
 
     std::pair<ObjList, ObjList> minimal_surface_area_split(ObjList& dividing_objects, BBox& left, BBox& right);
 
-    //For efficency, we want to do hit calculations differently for the first box versus sub-boxes
-    // ie we want to recurse to closer sub-boxes before further boxes and so we need to test both to pick the right one instead of blindly recursing
-    bool hit_internal(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
-
     public:
     BVHList(const BVHList& other) = delete;
     BVHList(ObjList& world_objects,int max_depth = 25);
     ~BVHList();
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     BBox bbox()const;
+    bool isLeaf()const;
 };
