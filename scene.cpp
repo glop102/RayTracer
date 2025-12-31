@@ -51,6 +51,9 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
                 Vector3::min_accum(memoized_bbox.min,ob.min);
                 Vector3::max_accum(memoized_bbox.max,ob.max);
             }
+            if(objects.size()>4) {
+                printf("BVH: Warning: Leaf made with %lu objects\n    consider increasing max depth\n", objects.size());
+            }
         } else {
             // Make sure the bounding box is zero size to try to never have it get hit when we have no objects to hold
             memoized_bbox.max = memoized_bbox.min = {0.0,0.0,0.0};
@@ -82,7 +85,7 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
         double ysize = (yslices.first.size()/4.0) * yleft_bbox.half_surface_area() + (yslices.second.size()/4.0) * yright_bbox.half_surface_area();
         double zsize = (zslices.first.size()/4.0) * zleft_bbox.half_surface_area() + (zslices.second.size()/4.0) * zright_bbox.half_surface_area();
         double smallest_size;
-        std::pair<BVHList::ObjList,BVHList::ObjList>* smallest_slices;
+        std::pair<ObjList,ObjList>* smallest_slices;
         if(xsize < ysize && xsize < zsize){
             smallest_size = xsize;
             smallest_slices = &xslices;
@@ -116,7 +119,7 @@ BBox BVHList::bbox()const{
     return memoized_bbox;
 }
 
-std::pair<BVHList::ObjList, BVHList::ObjList> BVHList::minimal_surface_area_split(ObjList& dividing_objects, BBox& left, BBox& right){
+std::pair<ObjList, ObjList> BVHList::minimal_surface_area_split(ObjList& dividing_objects, BBox& left, BBox& right){
     //We are guarenteed two items in the objects list because the constructor is handling there being 0 or 1 items
     //But lets check anyways
     if(dividing_objects.size()<=1){

@@ -4,9 +4,11 @@
 #include "shapes.h"
 #include "utils.h"
 
+using ObjList = std::vector<std::shared_ptr<Hittable>>;
+
 class HittableList:public Hittable{
     public:
-    std::vector<std::shared_ptr<Hittable>> objects;
+    ObjList objects;
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     void add(std::shared_ptr<Hittable> object);
     void clear();
@@ -14,8 +16,6 @@ class HittableList:public Hittable{
 };
 
 class BVHList:public Hittable{
-    public:
-    using ObjList = std::vector<std::shared_ptr<Hittable>>;
     protected:
     BVHList *left, *right;
     ObjList objects;

@@ -5,12 +5,12 @@ using std::sqrt;
 //===================================================================
 // Triangle
 //===================================================================
-Triangle::Triangle(Point3 p1, Point3 p2, Point3 p3):
+Triangle::Triangle(const Point3& p1, const Point3& p2, const Point3& p3):
     p1(p1), p2(p2), p3(p3), material(AluminiumDull)
 {
     normal = (p2-p1).cross(p3-p1).normalize();
 }
-Triangle::Triangle(Point3 p1, Point3 p2, Point3 p3, std::shared_ptr<Material> mat):
+Triangle::Triangle(const Point3& p1, const Point3& p2, const Point3& p3, std::shared_ptr<Material> mat):
     p1(p1), p2(p2), p3(p3), material(mat)
 {
     normal = (p2-p1).cross(p3-p1).normalize();
@@ -38,10 +38,10 @@ bool Triangle::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)c
 //===================================================================
 // Sphere
 //===================================================================
-Sphere::Sphere(Point3 center, double radius):
+Sphere::Sphere(const Point3& center, double radius):
     center(center),radius(radius),material(AluminiumDull)
 {}
-Sphere::Sphere(Point3 center, double radius,std::shared_ptr<Material> mat):
+Sphere::Sphere(const Point3& center, double radius,std::shared_ptr<Material> mat):
     center(center),radius(radius),material(mat)
 {}
 
