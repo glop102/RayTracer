@@ -28,8 +28,8 @@ class Triangle:public Hittable{
     Point3 p1,p2,p3;
     Vector3 normal;
     std::shared_ptr<Material> material;
-    Triangle(Point3 p1, Point3 p2, Point3 p3);
-    Triangle(Point3 p1, Point3 p2, Point3 p3, std::shared_ptr<Material> mat);
+    Triangle(const Point3& p1, const Point3& p2, const Point3& p3);
+    Triangle(const Point3& p1, const Point3& p2, const Point3& p3, std::shared_ptr<Material> mat);
 
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     BBox bbox()const;
@@ -40,8 +40,8 @@ class Sphere:public Hittable{
     Point3 center;
     double radius;
     std::shared_ptr<Material> material;
-    Sphere(Point3 center, double radius);
-    Sphere(Point3 center, double radius, std::shared_ptr<Material> mat);
+    Sphere(const Point3& center, double radius);
+    Sphere(const Point3& center, double radius, std::shared_ptr<Material> mat);
 
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     BBox bbox()const;
