@@ -67,6 +67,14 @@ std::shared_ptr<BRDMaterial> MetalShiny =
     0.0, //specular_tightness
     0.05 //roughness
 );
+std::shared_ptr<BRDMaterial> ErrorMaterialRed =
+    std::make_shared<BRDMaterial>(
+    Color{0.85,0.85,0.85}, //diffuse
+    Color{0.2,0.2,0.2}, //specular
+    Color{0.5,0,0}, //emissive
+    0.0, //specular_tightness
+    0.85 //roughness
+);
 
 
 //===================================================================
