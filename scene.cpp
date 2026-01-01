@@ -162,30 +162,34 @@ std::pair<ObjList, ObjList> BVHList::minimal_surface_area_split(ObjList& dividin
 
 
 bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    std::vector<const BVHList*> stack;
+    std::vector<std::pair<const BVHList*,RealRange>> stack;
     stack.reserve(this->max_depth_allowed *2 +2);
     // Convenient lambda to check if a given intersection distance range is actaully a hit (as a bool)
     // Captures the allowed_distance which is modified in place by per-object hits
     auto hits_aabb_dists = [&allowed_distance](RealRange& int_dists){
         return
-        int_dists.max >= int_dists.min && // Check if the ray direction actually would hit the AABB
-        int_dists.max > allowed_distance.min && // And also need to check if the intersection is within our clipping range
-        int_dists.min < allowed_distance.max;
+            int_dists.max >= int_dists.min && // Check if the ray direction actually would hit the AABB
+            int_dists.max > allowed_distance.min && // And also need to check if the intersection is within our clipping range
+            int_dists.min < allowed_distance.max;
     };
 
-    auto t = memoized_bbox.intersection_distance(ray);
-    if(!hits_aabb_dists(t)){
-        //missed the box - try the next in the stack
-        return false;
-    }
-
     // lets get the stack set up by adding in ourselves and then start walking down the tree
-    stack.push_back(this);
+    stack.push_back({
+        this,
+        memoized_bbox.intersection_distance(ray),
+    });
 
     bool found_hit = false;
     while(!stack.empty()) {
-        const BVHList* next_to_check = stack.back();
+        const BVHList* next_to_check;
+        RealRange int_dists;
+        std::tie(next_to_check,int_dists) = stack.back();
         stack.pop_back();
+
+        if(!hits_aabb_dists(int_dists)){
+            //missed the box - try the next in the stack
+            continue;
+        }
 
         // Check if it is a leaf node and search its objects
         if (next_to_check->isLeaf()) {
@@ -196,7 +200,7 @@ bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)co
             continue;
         }
 
-        // Not a leaf node, ecurse down into until we find a leaf
+        // Not a leaf node, recurse down into until we find a leaf
         auto tleft  = next_to_check->left->memoized_bbox.intersection_distance(ray);
         auto tright = next_to_check->right->memoized_bbox.intersection_distance(ray);
 
@@ -204,17 +208,17 @@ bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)co
         if(tleft.min < tright.min){
             // Left is closer so put the right on before the left
             if( hits_aabb_dists(tright) ){
-                stack.push_back(next_to_check->right);
+                stack.push_back({next_to_check->right,tright});
             }
             if( hits_aabb_dists(tleft) ){
-                stack.push_back(next_to_check->left);
+                stack.push_back({next_to_check->left,tleft});
             }
         }else{
             if( hits_aabb_dists(tleft) ){
-                stack.push_back(next_to_check->left);
+                stack.push_back({next_to_check->left,tleft});
             }
             if( hits_aabb_dists(tright) ){
-                stack.push_back(next_to_check->right);
+                stack.push_back({next_to_check->right,tright});
             }
         }
     }

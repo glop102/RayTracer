@@ -29,6 +29,7 @@ class BRDMaterial:public Material{
 extern std::shared_ptr<BRDMaterial> AluminiumDull;
 extern std::shared_ptr<BRDMaterial> Mirror;
 extern std::shared_ptr<BRDMaterial> MetalShiny;
+extern std::shared_ptr<BRDMaterial> ErrorMaterialRed;
 
 class PureTransparentMaterial:public Material{
     public:

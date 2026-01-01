@@ -31,6 +31,7 @@ void populate_random_spheres_plane_sitting(HittableList& list, int num_spheres, 
 }
 
 void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, RealRange radius_range, double major_sphere_radius, int glass_frequency=12){
+    auto glass = std::make_shared<PureTransparentMaterial>(PureTransparentMaterial(1.5));
     while(num_spheres){
         num_spheres--;
         double new_r = random_percentage_distribution(gen) * (radius_range.max - radius_range.min) + radius_range.min;
@@ -38,12 +39,25 @@ void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, Real
             Vector3::random_unit_vector() * major_sphere_radius,
             new_r,
             num_spheres%glass_frequency==0 ? 
-                (std::shared_ptr<Material>) std::make_shared<PureTransparentMaterial>(PureTransparentMaterial(1.5)) :
+                (std::shared_ptr<Material>) glass :
                 (std::shared_ptr<Material>) std::make_shared<BRDMaterial>(BRDMaterial::random())
             ));
     }
 }
 
+void populate_triangles_crafted_test(HittableList& list){
+    // Single Glass Cube
+    auto glass = std::make_shared<PureTransparentMaterial>(1.5);
+    for ( auto& cube_tri : make_cube( 3.0, Point3{6.0,0.0,0.0}, AluminiumDull) ) {
+        list.add(cube_tri);
+    }
+    for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,12.0,0.0}, AluminiumDull) ) {
+        list.add(cube_tri);
+    }
+    for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,0.0,6.0}, AluminiumDull) ) {
+        list.add(cube_tri);
+    }
+}
 void populate_sphere_crafted_test(HittableList& list){
     // "Horizon"
     list.add(std::make_shared<Sphere>(
@@ -87,6 +101,7 @@ int main(){
     // Camera viewport(1920*4,1080*4);
     Camera viewport(1920,1080);
     // Camera viewport(1920/2,1080/2);
+    viewport.sampling_per_pixel = 10;
     // viewport.sampling_per_pixel = 1000;
     // viewport.ongoing_image_export = 32;
     HittableList spheres;
@@ -94,7 +109,9 @@ int main(){
     // populate_random_spheres_volume(spheres,1000,RealRange{0.5,4},50,50,50);
     // populate_random_spheres_volume(spheres,100,RealRange{0.5,4},20,20,20);
     // populate_random_spheres_volume(spheres,20,RealRange{0.5,4},10,10,10);
-    populate_sphere_crafted_test(spheres);
+
+    // populate_sphere_crafted_test(spheres);
+    populate_triangles_crafted_test(spheres);
     populate_random_sphere_of_spheres(spheres,500,RealRange{2.0,6.0},100);
 
     Stopwatch timer,totalTimer;
@@ -102,9 +119,9 @@ int main(){
     print("BVH Creation Time  {}\n",timer.duration());
 
     //Horizontal Rotation
-    int number_frames = 120;
-    // for(int frame=0; frame < number_frames; frame++){
-        int frame = 40; //58;
+    int number_frames = 16;
+    for(int frame=0; frame < number_frames; frame++){
+        // int frame = 40; //58;
         viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
         viewport.look_at(Vector3{0,0,0});
         timer.reset();
@@ -112,14 +129,8 @@ int main(){
         viewport.render(world);
         print("Frame: {} - {}\n",frame,ms_to_human(timer.duration()));
         viewport.threaded_write_to_png(std::format("video/{}.png",frame));
-    // }
+    }
 
-    // viewport.write_to_png("output_bvh.png");
-    // timer.reset();
-    // viewport.render(spheres);
-    // print("Frame: {}\n",ms_to_human(timer.duration()));
-    // viewport.write_to_png("output_sphere.png");
-    // viewport.write_to_png("19200x10800_10Krays.png");
     print("\n\nTotal Time {}\n",ms_to_human(totalTimer.duration()));
     return 0;
 }

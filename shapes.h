@@ -46,3 +46,5 @@ class Sphere:public Hittable{
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     BBox bbox()const;
 };
+
+std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& center, std::shared_ptr<Material> material);
