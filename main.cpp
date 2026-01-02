@@ -101,7 +101,7 @@ int main(){
     // Camera viewport(1920*4,1080*4);
     Camera viewport(1920,1080);
     // Camera viewport(1920/2,1080/2);
-    viewport.sampling_per_pixel = 10;
+    // viewport.sampling_per_pixel = 10;
     // viewport.sampling_per_pixel = 1000;
     // viewport.ongoing_image_export = 32;
     HittableList spheres;
