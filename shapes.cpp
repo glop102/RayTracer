@@ -82,7 +82,7 @@ bool Triangle::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)c
     } else {
         rec.normal = this->normal.reverse();
         rec.front_face = false;
-        rec.material = ErrorMaterialRed;
+        // rec.material = ErrorMaterialRed;
     }
 
     return true;
@@ -167,16 +167,16 @@ std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& ce
     // this is wound in the counter-clockwise order
     const Vector3 front_face_og[4] = {
         {1,-1,-1},
-        {1,-1,1},
-        {1,1,1},
         {1,1,-1},
+        {1,1,1},
+        {1,-1,1},
     };
     // And this is the set of points for the back face, also in counter-clockwise order
     const Vector3 back_face_og[4] = {
         {-1,-1,-1},
-        {-1,1,-1},
-        {-1,1,1},
         {-1,-1,1},
+        {-1,1,1},
+        {-1,1,-1},
     };
     Vector3 front_face[4] = {
         front_face_og[0]*radius + center,
