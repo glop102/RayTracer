@@ -38,7 +38,7 @@ extern bool load_ply_file(std::string filename, HittableList& list, std::shared_
         file >> x;
         file >> y;
         file >> z;
-        vertexes.push_back(Point3{x,y,z} * scale);
+        vertexes.push_back( (Point3{x,y,z} * scale) + center );
         std::getline(file,line); // consume the rest of the line
     }
 
@@ -56,11 +56,11 @@ extern bool load_ply_file(std::string filename, HittableList& list, std::shared_
         file >> p3;
         list.add(
             std::make_shared<Triangle>(
-            vertexes[p1]+center,
-            vertexes[p2]+center,
-            vertexes[p3]+center,
-            material
-        )
+                vertexes[p1],
+                vertexes[p2],
+                vertexes[p3],
+                material
+            )
         );
         std::getline(file,line); // consume the rest of the line
     }

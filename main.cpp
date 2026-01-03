@@ -59,7 +59,8 @@ void populate_triangles_crafted_test(HittableList& list){
     //     list.add(cube_tri);
     // }
 
-    load_ply_file("bunny/reconstruction/bun_zipper.ply", list, glass, 100.0, Point3 {0,-5.0,0});
+    // load_ply_file("bunny/reconstruction/bun_zipper.ply", list, glass, 100.0, Point3 {0,-5.0,0});
+    load_ply_file("bunny/reconstruction/bun_zipper.ply", list, AluminiumDull, 100.0, Point3 {0,-5.0,0});
 }
 void populate_sphere_crafted_test(HittableList& list){
     // "Horizon"
