@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "shapes.h"
 #include "scene.h"
+#include "model.h"
 
 void populate_random_spheres_volume(HittableList& list, int num_spheres, RealRange radius_range, double dx, double dy, double dz, int glass_frequency=12){
     while(num_spheres){
@@ -46,17 +47,19 @@ void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, Real
 }
 
 void populate_triangles_crafted_test(HittableList& list){
-    // Single Glass Cube
     auto glass = std::make_shared<PureTransparentMaterial>(1.5);
-    for ( auto& cube_tri : make_cube( 3.0, Point3{6.0,0.0,0.0}, AluminiumDull) ) {
-        list.add(cube_tri);
-    }
-    for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,12.0,0.0}, AluminiumDull) ) {
-        list.add(cube_tri);
-    }
-    for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,0.0,6.0}, AluminiumDull) ) {
-        list.add(cube_tri);
-    }
+
+    // for ( auto& cube_tri : make_cube( 3.0, Point3{6.0,0.0,0.0}, AluminiumDull) ) {
+    //     list.add(cube_tri);
+    // }
+    // for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,12.0,0.0}, MetalShiny) ) {
+    //     list.add(cube_tri);
+    // }
+    // for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,0.0,6.0}, glass) ) {
+    //     list.add(cube_tri);
+    // }
+
+    load_ply_file("bunny/reconstruction/bun_zipper.ply", list, glass, 100.0, Point3 {0,-5.0,0});
 }
 void populate_sphere_crafted_test(HittableList& list){
     // "Horizon"
@@ -96,6 +99,17 @@ void populate_sphere_crafted_test(HittableList& list){
     //     std::make_shared<BRDMaterial>(Black,Black,White,1.0,0.1)
     // ));
 }
+void populate_hand_crafted_box_plus_embedded_sphere(HittableList& list){
+    auto glass = std::make_shared<PureTransparentMaterial>(1.5);
+    for ( auto& cube_tri : make_cube( 8.0, Point3{0.0,0.0,0.0}, glass) ) {
+        list.add(cube_tri);
+    }
+    list.add(std::make_shared<Sphere>(
+        Vector3{0.0,0.0,0.0},
+        6.5,
+        std::make_shared<BRDMaterial>(DarkBlue,White,Black,1.0,0.1)
+    ));
+}
 
 int main(){
     // Camera viewport(1920*4,1080*4);
@@ -112,6 +126,7 @@ int main(){
 
     // populate_sphere_crafted_test(spheres);
     populate_triangles_crafted_test(spheres);
+    // populate_hand_crafted_box_plus_embedded_sphere(spheres);
     populate_random_sphere_of_spheres(spheres,500,RealRange{2.0,6.0},100);
 
     Stopwatch timer,totalTimer;
@@ -120,8 +135,8 @@ int main(){
 
     //Horizontal Rotation
     int number_frames = 16;
-    for(int frame=0; frame < number_frames; frame++){
-        // int frame = 40; //58;
+    // for(int frame=0; frame < number_frames; frame++){
+        int frame = 4; //58;
         viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
         viewport.look_at(Vector3{0,0,0});
         timer.reset();
@@ -129,7 +144,7 @@ int main(){
         viewport.render(world);
         print("Frame: {} - {}\n",frame,ms_to_human(timer.duration()));
         viewport.threaded_write_to_png(std::format("video/{}.png",frame));
-    }
+    // }
 
     print("\n\nTotal Time {}\n",ms_to_human(totalTimer.duration()));
     return 0;
