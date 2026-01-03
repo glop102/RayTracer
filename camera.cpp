@@ -80,20 +80,45 @@ void Camera::render(const Hittable& scene){
     viewport_up = viewport_right.cross(look_direction).normalize();
     look_direction = look_direction.normalize();
 
+    auto screen_origin = _calculate_screen_origin();
+    auto pixel_delta_x = _calculate_pixel_delta_x();
+    auto pixel_delta_y = _calculate_pixel_delta_y();
+
     // Spawns multiple threads to saturate a CPU
-    // Each thread locks the atomic to safely pick what is the next line that will be rendered
-    // The real work of the ray tracing is done in the function call in the lambda
-    // Note: there is no lock on the pixels array because each thread should be independantly writing to their pixels and should not step on each other
-    std::atomic<int> next_line = 0;
-    auto capture = [this,&scene,&next_line](){
-            int max_line = pixels->height();
-            int our_claimed_line = next_line++;
-            while(our_claimed_line < max_line){
-                this->_scanline_thread_runner(scene,our_claimed_line);
-                if(ongoing_image_export && our_claimed_line %ongoing_image_export == 0)
+    // Each thread will grab the mutex to figure out what pixel they are working on
+    // there is no lock on the pixel array since each thread works on a different pixel and should not step on each other
+    std::atomic<int> next_x = 0;
+    std::atomic<int> next_y = 0;
+    std::mutex pixel_progress_lock;
+    auto capture = [this, &scene, &next_y,&next_x, &pixel_progress_lock, &screen_origin,&pixel_delta_x,&pixel_delta_y](){
+            int our_claimed_y, our_claimed_x;
+            Color accum = Black;
+            goto init_pixel_loop;
+            do {
+                accum = Black;
+                for(int sample=0; sample<sampling_per_pixel; sample++){
+                    Ray ray = _initial_pixel_ray(our_claimed_x,our_claimed_y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
+                    accum += _cast_ray_for_color(ray,scene);
+                }
+                pixels->get_px(our_claimed_x,our_claimed_y) = accum / sampling_per_pixel;
+
+                if(ongoing_image_export && !our_claimed_x && our_claimed_y %ongoing_image_export == 0)
                     write_to_png("ongoing.png");
-                our_claimed_line = next_line++;
-            }
+
+                // To be actually C complient, we cannot have an infinite while loop
+                // Also it just makes sense to have the loop conditional be in the right place
+                // So we have this label to jump to the bookkeeping code for the loop at the end which also serves to initialize the loop conditionals
+                // otherwise, i would be forced to duplicate code that does the setup before the loop
+                init_pixel_loop:
+                pixel_progress_lock.lock();
+                our_claimed_x = next_x++;
+                our_claimed_y = next_y;
+                if ( our_claimed_x >= pixels->width() ) {
+                    next_x = our_claimed_x = 0;
+                    our_claimed_y = next_y++;
+                }
+                pixel_progress_lock.unlock();
+            } while( our_claimed_y < this->pixels->height() );
         };
     int max_threads = thread::hardware_concurrency();
     std::vector<std::jthread> threads(max_threads);
@@ -102,22 +127,7 @@ void Camera::render(const Hittable& scene){
     }
 }
 
-void Camera::_scanline_thread_runner(const Hittable& scene, int y){
-    // Renders a full line its whole width
-    auto screen_origin = _calculate_screen_origin();
-    auto pixel_delta_x = _calculate_pixel_delta_x();
-    auto pixel_delta_y = _calculate_pixel_delta_y();
-    for(int x=0;x<pixels->width(); x++){
-        Color accum = Black;
-        for(int sample=0; sample<sampling_per_pixel; sample++){
-            Ray ray = _initial_pixel_ray(x,y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
-            accum += _cast_ray_for_color(ray,scene);
-        }
-        pixels->get_px(x,y) = accum / sampling_per_pixel;
-    }
-}
-
-Color simulated_skybox(const Ray& ray) {
+static inline Color simulated_skybox(const Ray& ray) {
     // Lets simulate a light blue skybox gradient if we completly miss.
     // It is ever so slightly faster to normalize just our Y component since that is all we need
     auto y = ray.direction.y/ray.direction.length();
@@ -154,17 +164,5 @@ Color Camera::_cast_ray_for_color(Ray& ray, const Hittable& scene){
             break;
         }
     }
-    // if (total_attenuation.length_squared()<=0.0000001) {
-    //     if (rec.material.get() && dynamic_cast<PureTransparentMaterial*>(rec.material.get())) {
-    //         printf("Last hit Transparent - ");
-    //     }
-    //     printf("Hit too much attenuation - %d\n", depth_left);
-    // }
-    // if (depth_left == 0) {
-    //     if (rec.material.get() && dynamic_cast<PureTransparentMaterial*>(rec.material.get())) {
-    //         printf("Last hit Transparent - ");
-    //     }
-    //     printf("Hit Max Depth\n");
-    // }
     return accumulated_energy;
 }

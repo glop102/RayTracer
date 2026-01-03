@@ -28,7 +28,6 @@ class Camera{
     Vector3 _calculate_pixel_delta_x()const;
     Vector3 _calculate_pixel_delta_y()const;
 
-    void _scanline_thread_runner(const Hittable& scene, int y);
     Color _cast_ray_for_color(Ray& ray, const Hittable& scene);
 
     public:
