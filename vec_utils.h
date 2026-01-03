@@ -67,6 +67,8 @@ class BBox{
     double half_surface_area()const;
     RealRange intersection_distance(const Ray& ray)const;
     void absorb(const BBox& other);
+    void absorb(const Point3& point);
+    Point3 center()const;
 };
 
 extern const Vector3 x_pos,y_pos,z_pos;

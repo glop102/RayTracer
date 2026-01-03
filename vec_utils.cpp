@@ -289,17 +289,25 @@ RealRange BBox::intersection_distance(const Ray& ray)const{
 
     // Now that we know the distances for intersections for x/y/z, we can tell if the
     // intersections on each plane makes sense for our ray
-    double tmin = std::numeric_limits<double>::lowest();
-    double tmax = std::numeric_limits<double>::max();
-    for(int i=0; i<3; i++){
-        tmin = std::max(tmin,dsmin[i]);
-        tmax = std::min(tmax,dsmax[i]);
-    }
-
-    return {tmin,tmax};
+    return {
+        std::max(std::max(dsmin[0],dsmin[1]),dsmin[2]),
+        std::min(std::min(dsmax[0],dsmax[1]),dsmax[2]),
+    };
 }
 
 void BBox::absorb(const BBox& other) {
     Vector3::min_accum(this->min,other.min);
     Vector3::max_accum(this->max,other.max);
+}
+void BBox::absorb(const Point3& point) {
+    Vector3::min_accum(this->min,point);
+    Vector3::max_accum(this->max,point);
+}
+
+Point3 BBox::center()const{
+    return {
+        (min.x + max.x) / 2.0,
+        (min.y + max.y) / 2.0,
+        (min.z + max.z) / 2.0,
+    };
 }

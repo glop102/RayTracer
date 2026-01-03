@@ -47,9 +47,7 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
         if(objects.size()>=1){
             memoized_bbox = objects[0]->bbox();
             for(int x=1;x<objects.size();x++){
-                BBox ob = objects[x]->bbox();
-                Vector3::min_accum(memoized_bbox.min,ob.min);
-                Vector3::max_accum(memoized_bbox.max,ob.max);
+                memoized_bbox.absorb(objects[x]->bbox());
             }
             if(objects.size()>4) {
                 printf("BVH: Warning: Leaf made with %lu objects\n    consider increasing max depth\n", objects.size());
@@ -60,52 +58,43 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
         }
     } else {
         memoized_bbox = objects[0]->bbox();
+        BBox centroid_bbox{objects[0]->bbox().center(), objects[0]->bbox().center()};
         for(int i=1; i<objects.size(); i++){
-            memoized_bbox.absorb(objects[i]->bbox());
+            auto obj_bbox = objects[i]->bbox();
+            memoized_bbox.absorb(obj_bbox);
+            centroid_bbox.absorb(obj_bbox.center());
         }
 
-        // x-sort
+        auto delta_centroids = centroid_bbox.max - centroid_bbox.min;
         ObjList sorted(objects);
-        std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.x < obj2->bbox().min.x;} );
-        BBox xleft_bbox,xright_bbox;
-        auto xslices = minimal_surface_area_split(sorted,xleft_bbox,xright_bbox);
-        
-        // y-sort
-        std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.y < obj2->bbox().min.y;} );
-        BBox yleft_bbox,yright_bbox;
-        auto yslices = minimal_surface_area_split(sorted,yleft_bbox,yright_bbox);
-        
-        // z-sort
-        std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.z < obj2->bbox().min.z;} );
-        BBox zleft_bbox,zright_bbox;
-        auto zslices = minimal_surface_area_split(sorted,zleft_bbox,zright_bbox);
-
-        //we have our slices - so lets find the smallest
-        double xsize = (xslices.first.size()/4.0) * xleft_bbox.half_surface_area() + (xslices.second.size()/4.0) * xright_bbox.half_surface_area();
-        double ysize = (yslices.first.size()/4.0) * yleft_bbox.half_surface_area() + (yslices.second.size()/4.0) * yright_bbox.half_surface_area();
-        double zsize = (zslices.first.size()/4.0) * zleft_bbox.half_surface_area() + (zslices.second.size()/4.0) * zright_bbox.half_surface_area();
-        double smallest_size;
-        std::pair<ObjList,ObjList>* smallest_slices;
-        if(xsize < ysize && xsize < zsize){
-            smallest_size = xsize;
-            smallest_slices = &xslices;
-        }else if(ysize < zsize){
-            smallest_size = ysize;
-            smallest_slices = &yslices;
-        }else{
-            smallest_size = zsize;
-            smallest_slices = &zslices;
+        if(delta_centroids.x > delta_centroids.y && delta_centroids.x > delta_centroids.z) {
+            // Longest axis is X - so lets subdivide the bounding box on that axis
+            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.x < obj2->bbox().min.x;} );
+        } else if (delta_centroids.y > delta_centroids.z) {
+            // Longest axis is Y
+            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.y < obj2->bbox().min.y;} );
+        } else {
+            // Longest axis is Z
+            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.z < obj2->bbox().min.z;} );
         }
+
+        //Lets try splitting the shortest axis
+        BBox left_bbox,right_bbox;
+        ObjList left_objects,right_objects;
+        std::tie(left_objects,right_objects) = minimal_surface_area_split(sorted,left_bbox,right_bbox);
+
+        //we have our slices - so lets calculate the "cost" of the split
+        double split_size = (left_objects.size()/4.0) * left_bbox.half_surface_area() + (right_objects.size()/4.0) * right_bbox.half_surface_area();
 
         // Check if we have something that doesn't make sense to break up or if we should continue recursing down
-        if (smallest_slices->first.size() == 0 || smallest_slices->second.size() == 0 || smallest_size >= (objects.size()/4.0) * memoized_bbox.half_surface_area()) {
-            // No subdivision happened so we are a leaf
+        if (left_objects.size() == 0 || right_objects.size() == 0 || split_size >= (objects.size()/4.0) * memoized_bbox.half_surface_area()) {
+            // No subdivision happened or the split cost is more than not splitting at all so we are a leaf
             // The objects are already assigned to our object so nothing left to do for it
             left = right = nullptr;
         } else {
             objects.clear(); // no reason to hold onto the objects list since we will never check them
-            left = new BVHList(smallest_slices->first,max_depth-1);
-            right = new BVHList(smallest_slices->second,max_depth-1);
+            left = new BVHList(left_objects,max_depth-1);
+            right = new BVHList(right_objects,max_depth-1);
         }
     }
 }
