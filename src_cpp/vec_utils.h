@@ -63,7 +63,8 @@ class Ray{
 
 class BBox{
     public:
-    Point3 min,max;
+    Point3 min={ Infinity, Infinity, Infinity};
+    Point3 max={-Infinity,-Infinity,-Infinity};
     double half_surface_area()const;
     RealRange intersection_distance(const Ray& ray)const;
     void absorb(const BBox& other);

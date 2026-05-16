@@ -87,14 +87,16 @@ void Camera::render(const Hittable& scene){
     // Spawns multiple threads to saturate a CPU
     // Each thread will grab the mutex to figure out what pixel they are working on
     // there is no lock on the pixel array since each thread works on a different pixel and should not step on each other
-    std::atomic<int> next_x = 0;
-    std::atomic<int> next_y = 0;
-    std::mutex pixel_progress_lock;
-    auto capture = [this, &scene, &next_y,&next_x, &pixel_progress_lock, &screen_origin,&pixel_delta_x,&pixel_delta_y](){
+    std::atomic<int> next_pixel_num = 0;
+    auto capture = [this, &scene, &next_pixel_num, &screen_origin,&pixel_delta_x,&pixel_delta_y](){
+	    int out_claimed_pixel_num;
             int our_claimed_y, our_claimed_x;
+	    int total_pixels = this->pixels->width() * this->pixels->height();
             Color accum = Black;
-            goto init_pixel_loop;
-            do {
+            while ( (out_claimed_pixel_num = next_pixel_num.fetch_add(1,std::memory_order_relaxed)) < total_pixels ) {
+                our_claimed_y = out_claimed_pixel_num / this->pixels->width();
+                our_claimed_x = out_claimed_pixel_num % this->pixels->width();
+
                 accum = Black;
                 for(int sample=0; sample<sampling_per_pixel; sample++){
                     Ray ray = _initial_pixel_ray(our_claimed_x,our_claimed_y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
@@ -104,24 +106,10 @@ void Camera::render(const Hittable& scene){
 
                 if(ongoing_image_export && !our_claimed_x && our_claimed_y %ongoing_image_export == 0)
                     write_to_png("ongoing.png");
-
-                // To be actually C complient, we cannot have an infinite while loop
-                // Also it just makes sense to have the loop conditional be in the right place
-                // So we have this label to jump to the bookkeeping code for the loop at the end which also serves to initialize the loop conditionals
-                // otherwise, i would be forced to duplicate code that does the setup before the loop
-                init_pixel_loop:
-                pixel_progress_lock.lock();
-                our_claimed_x = next_x++;
-                our_claimed_y = next_y;
-                if ( our_claimed_x >= pixels->width() ) {
-                    next_x = our_claimed_x = 0;
-                    our_claimed_y = next_y++;
-                }
-                pixel_progress_lock.unlock();
-            } while( our_claimed_y < this->pixels->height() );
+            }
         };
     int max_threads = thread::hardware_concurrency();
-    std::vector<std::jthread> threads(max_threads);
+    std::vector<std::jthread> threads;
     for(int t=0; t<max_threads; t++){
         threads.emplace_back( std::jthread(capture) );
     }
