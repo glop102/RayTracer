@@ -175,6 +175,7 @@ int main(int argc, char** argv){
     Stopwatch timer,totalTimer;
     BVHList world(spheres.objects);
     print("BVH Creation Time  {}\n",timer.duration());
+    world.debug_print_tree();
 
     //Horizontal Rotation
     int number_frames = 16;

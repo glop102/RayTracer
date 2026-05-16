@@ -29,4 +29,5 @@ class BVHList:public Hittable{
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
     BBox bbox()const;
     bool isLeaf()const;
+    void debug_print_tree(int indent=0)const;
 };

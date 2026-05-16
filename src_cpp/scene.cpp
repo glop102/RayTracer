@@ -1,5 +1,6 @@
 #include "scene.h"
 #include <utility>
+#include <functional>
 
 using std::shared_ptr;
 using std::make_shared;
@@ -194,7 +195,6 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
             // the split cost is more than not splitting at all so we are a leaf
             // The objects are already assigned to our object so nothing left to do for it
             left = right = nullptr;
-            printf("Early cost bail\n");
         } else {
             ObjList left_objects,right_objects;
             for( int x=0; x<best_bin_split; x++){
@@ -204,7 +204,6 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
                 right_objects.insert(right_objects.end(),bins[x].objects.begin(),bins[x].objects.end());
             }
             objects.clear(); // no reason to hold onto the objects list since we will never check them
-            printf("%d - left %ld, right %ld\n",max_depth_allowed, left_objects.size(), right_objects.size());
             left = new BVHList(left_objects,max_depth-1);
             right = new BVHList(right_objects,max_depth-1);
         }
@@ -282,6 +281,48 @@ bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)co
         }
     }
     return found_hit;
+}
+
+void BVHList::debug_print_tree(int)const{
+    struct NodeInfo {
+        const BVHList* node;
+        int depth;
+        size_t left_count;
+        size_t right_count;
+        double imbalance;
+    };
+
+    std::function<size_t(const BVHList*)> count_objects = [&](const BVHList* n) -> size_t {
+        if(n->isLeaf()) return n->objects.size();
+        return count_objects(n->left) + count_objects(n->right);
+    };
+
+    std::vector<NodeInfo> nodes;
+    std::vector<std::pair<const BVHList*,int>> stack;
+    stack.push_back({this, 0});
+    while(!stack.empty()){
+        auto [node, depth] = stack.back();
+        stack.pop_back();
+        if(node->isLeaf()) continue;
+        size_t lc = count_objects(node->left);
+        size_t rc = count_objects(node->right);
+        double ratio = (double)std::max(lc,rc) / (double)std::max((size_t)1, std::min(lc,rc));
+        nodes.push_back({node, depth, lc, rc, ratio});
+        stack.push_back({node->left,  depth+1});
+        stack.push_back({node->right, depth+1});
+    }
+
+    std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b){
+        return a.imbalance > b.imbalance;
+    });
+
+    int to_print = std::min((int)nodes.size(), 50);
+    printf("Top %d most unbalanced nodes (of %lu internal nodes):\n", to_print, nodes.size());
+    for(int i=0; i<to_print; i++){
+        auto& n = nodes[i];
+        printf("  depth=%-3d  left=%-6lu  right=%-6lu  ratio=%.2fx\n",
+            n.depth, n.left_count, n.right_count, n.imbalance);
+    }
 }
 
 bool BVHList::isLeaf()const{
