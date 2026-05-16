@@ -8,3 +8,5 @@ raytrace
 *.webm
 *.mp4
 perf.data*
+code_review.txt
+result

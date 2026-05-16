@@ -9,6 +9,9 @@ OBJS = $(patsubst %.cpp,${OBJ_DIR}/%.o,$(SRCS))
 
 all: raytrace
 
+install: raytrace
+	install -Dm755 raytrace $(DESTDIR)/bin/raytracer
+
 raytrace: ${OBJS}
 	$(CXX) $(OBJS) $(LIBS) -o $@ ${CXXFLAGS} -flto
 
