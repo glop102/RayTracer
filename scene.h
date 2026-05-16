@@ -22,8 +22,6 @@ class BVHList:public Hittable{
     int max_depth_allowed; // how much more depth is allowed
     BBox memoized_bbox;
 
-    std::pair<ObjList, ObjList> minimal_surface_area_split(ObjList& dividing_objects, BBox& left, BBox& right);
-
     public:
     BVHList(const BVHList& other) = delete;
     BVHList(ObjList& world_objects,int max_depth = 25);

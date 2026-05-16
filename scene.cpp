@@ -40,7 +40,7 @@ BBox HittableList::bbox()const{
 //===================================================================
 BVHList::BVHList(ObjList& world_objects,int max_depth)
 : max_depth_allowed(max_depth), objects(world_objects) {
-    if(max_depth_allowed<=0 || objects.size() <= 1){
+    if(max_depth_allowed<=0 || objects.size() <= 2){
         // Recursion end case of max depth or only a single object
         // this should be the only case where left or right are null
         right = left = nullptr;
@@ -66,33 +66,145 @@ BVHList::BVHList(ObjList& world_objects,int max_depth)
         }
 
         auto delta_centroids = centroid_bbox.max - centroid_bbox.min;
-        ObjList sorted(objects);
+        struct BINS {
+            ObjList objects;
+            BBox bbox;
+        };
+        const int NUM_BINS = std::max(8,(int) sqrt(objects.size()));
+        struct BINS bins[NUM_BINS];
         if(delta_centroids.x > delta_centroids.y && delta_centroids.x > delta_centroids.z) {
             // Longest axis is X - so lets subdivide the bounding box on that axis
-            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.x < obj2->bbox().min.x;} );
+            {
+                auto face = objects[0];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.x-centroid_bbox.min.x)/delta_centroids.x;
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+
+                bins[bin_num].bbox = face_bbox;
+                bins[bin_num].objects.push_back(face);
+            }
+
+            for (int x=1; x<objects.size(); x++) {
+                auto face = objects[x];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.x-centroid_bbox.min.x)/delta_centroids.x;
+                // Intentionally truncating to the floor of the double
+                // If we are 20% through the x axis, then really we want 20% of NUM_BINS to put the shape into
+                // The tiny fudge factor is to deal with things sometimes coming out to be exactly NUM_BINS
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+                bins[bin_num].bbox.absorb(face_bbox);
+                bins[bin_num].objects.push_back(face);
+            }
         } else if (delta_centroids.y > delta_centroids.z) {
             // Longest axis is Y
-            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.y < obj2->bbox().min.y;} );
-        } else {
+            {
+                auto face = objects[0];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.y-centroid_bbox.min.y)/delta_centroids.y;
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+
+                bins[bin_num].bbox = face_bbox;
+                bins[bin_num].objects.push_back(face);
+            }
+
+            for (int x=1; x<objects.size(); x++) {
+                auto face = objects[x];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.y-centroid_bbox.min.y)/delta_centroids.y;
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+                bins[bin_num].bbox.absorb(face_bbox);
+                bins[bin_num].objects.push_back(face);
+            }
+        } else if (delta_centroids.z > 0) {
             // Longest axis is Z
-            std::sort(sorted.begin(), sorted.end(), [](const std::shared_ptr<Hittable>& obj1,const std::shared_ptr<Hittable>& obj2){return obj1->bbox().min.z < obj2->bbox().min.z;} );
+            {
+                auto face = objects[0];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.z-centroid_bbox.min.z)/delta_centroids.z;
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+
+                bins[bin_num].bbox = face_bbox;
+                bins[bin_num].objects.push_back(face);
+            }
+
+            for (int x=1; x<objects.size(); x++) {
+                auto face = objects[x];
+                auto face_bbox = face->bbox();
+                auto center = face_bbox.center();
+                double percentage_through_centroid_range = (center.z-centroid_bbox.min.z)/delta_centroids.z;
+                int bin_num = percentage_through_centroid_range*NUM_BINS*.99999;
+                bins[bin_num].bbox.absorb(face_bbox);
+                bins[bin_num].objects.push_back(face);
+            }
+        } else {
+            // We have no difference in center of objects and so the math explodes if we try to subdivide.
+            // It is super rare to have a ton of objects with perfectly overlapping centers so lets just leave everything as is
+            if ( objects.size() > 16 ) {
+                printf("Warning: Numerous items overlapping with the same center and cannot be subdivided - X%f Y%f Z%f\n",
+                    centroid_bbox.min.x,
+                    centroid_bbox.min.y,
+                    centroid_bbox.min.z
+                );
+            }
+            left = right = nullptr;
+            return;
         }
 
-        //Lets try splitting the shortest axis
-        BBox left_bbox,right_bbox;
-        ObjList left_objects,right_objects;
-        std::tie(left_objects,right_objects) = minimal_surface_area_split(sorted,left_bbox,right_bbox);
+        // Now that the objects have been added into bins, lets see which bin split is the best split
+        // We will Add the bounding boxes of the different bins 
+        int best_bin_split = 0;
+        double best_split_cost = std::numeric_limits<double>::max();
+        #define OBJ_COUNT_SCALE 1.0
+        for( int split=1; split<NUM_BINS; split++ ) {
+            BBox temp_left_bbox,temp_right_bbox;
+            int temp_left_count, temp_right_count;
+            temp_left_bbox = bins[0].bbox;
+            temp_left_count = bins[0].objects.size();
+            temp_right_bbox = bins[NUM_BINS-1].bbox;
+            temp_right_count = bins[NUM_BINS-1].objects.size();
+            // Grow the left BBox
+            for(int lextra=1; lextra<split; lextra++){
+                if(!bins[lextra].objects.size())
+                    // skip absorbing bounding boxes that have no objects in them
+                    continue;
+                temp_left_bbox.absorb(bins[lextra].bbox);
+                temp_left_count += bins[lextra].objects.size();
+            }
+            //Grow the right BBox
+            for(int rextra=split; rextra<NUM_BINS-1; rextra++){
+                if(!bins[rextra].objects.size())
+                    continue;
+                temp_right_bbox.absorb(bins[rextra].bbox);
+                temp_right_count += bins[rextra].objects.size();
+            }
+            double cost = (temp_left_count/OBJ_COUNT_SCALE)*temp_left_bbox.half_surface_area() + (temp_right_count/OBJ_COUNT_SCALE)*temp_right_bbox.half_surface_area();
+            if (cost < best_split_cost){
+                best_bin_split = split;
+                best_split_cost = cost;
+            }
+        }
 
-        //we have our slices - so lets calculate the "cost" of the split
-        double split_size = (left_objects.size()/4.0) * left_bbox.half_surface_area() + (right_objects.size()/4.0) * right_bbox.half_surface_area();
-
-        // Check if we have something that doesn't make sense to break up or if we should continue recursing down
-        if (left_objects.size() == 0 || right_objects.size() == 0 || split_size >= (objects.size()/4.0) * memoized_bbox.half_surface_area()) {
-            // No subdivision happened or the split cost is more than not splitting at all so we are a leaf
+        // Check if we have something that doesn't make sense to break up
+        if (best_split_cost >= (objects.size()/OBJ_COUNT_SCALE) * memoized_bbox.half_surface_area()) {
+            // the split cost is more than not splitting at all so we are a leaf
             // The objects are already assigned to our object so nothing left to do for it
             left = right = nullptr;
+            printf("Early cost bail\n");
         } else {
+            ObjList left_objects,right_objects;
+            for( int x=0; x<best_bin_split; x++){
+                left_objects.insert(left_objects.end(),bins[x].objects.begin(),bins[x].objects.end());
+            }
+            for( int x=best_bin_split; x<NUM_BINS; x++){
+                right_objects.insert(right_objects.end(),bins[x].objects.begin(),bins[x].objects.end());
+            }
             objects.clear(); // no reason to hold onto the objects list since we will never check them
+            printf("%d - left %ld, right %ld\n",max_depth_allowed, left_objects.size(), right_objects.size());
             left = new BVHList(left_objects,max_depth-1);
             right = new BVHList(right_objects,max_depth-1);
         }
@@ -107,48 +219,6 @@ BVHList::~BVHList(){
 BBox BVHList::bbox()const{
     return memoized_bbox;
 }
-
-std::pair<ObjList, ObjList> BVHList::minimal_surface_area_split(ObjList& dividing_objects, BBox& left, BBox& right){
-    //We are guarenteed two items in the objects list because the constructor is handling there being 0 or 1 items
-    //But lets check anyways
-    if(dividing_objects.size()<=1){
-        if(dividing_objects.size())
-            left = dividing_objects[0]->bbox();
-        return std::make_pair<ObjList,ObjList>(ObjList(dividing_objects),ObjList());
-    }
-    //We assume that objects is already sorted in whatever way is sensible
-    //So now we need to partition the list in half, and move that partition around until we find the minimal surface area
-    //We want to try every single index as the splitting line and try to find one where the total surface area is minimized
-    unsigned int best_split = 0;
-    double best_split_area = std::numeric_limits<double>::max();
-    BBox testing_bbox_left,testing_bbox_right;
-    for( unsigned int split=1; split<dividing_objects.size(); split++ ){
-        // Left split
-        testing_bbox_left = dividing_objects[0]->bbox();
-        for(int i=1; i<split; i++){
-            testing_bbox_left.absorb(dividing_objects[i]->bbox());
-        }
-        // Right Split
-        testing_bbox_right = dividing_objects[split]->bbox();
-        for(int i=split+1; i<dividing_objects.size(); i++){
-            testing_bbox_right.absorb(dividing_objects[i]->bbox());
-        }
-
-        // The cost of a particular split should take into account how badly it is not evenly splitting the objects in the scene
-        // That is why we multiply the area cost by the number of objects still in that contained area
-        double testing_area_cost = (split / 4.0) * testing_bbox_left.half_surface_area() + ((dividing_objects.size() - split)/4.0) * testing_bbox_right.half_surface_area();
-        if (testing_area_cost < best_split_area) {
-            best_split_area = testing_area_cost;
-            best_split = split;
-            left = testing_bbox_left;
-            right = testing_bbox_right;
-        }
-    }
-
-    auto rightBegin = dividing_objects.begin()+best_split;
-    return std::make_pair<ObjList,ObjList>(std::vector(dividing_objects.begin(),rightBegin),std::vector(rightBegin,dividing_objects.end()));
-}
-
 
 bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
     std::vector<std::pair<const BVHList*,RealRange>> stack;
