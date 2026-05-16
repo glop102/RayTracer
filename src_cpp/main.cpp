@@ -1,10 +1,48 @@
 #include <vector>
 #include <random>
+#include <cstdlib>
+#include <cstring>
 #include "utils.h"
 #include "camera.h"
 #include "shapes.h"
 #include "scene.h"
 #include "model.h"
+
+struct RenderConfig {
+    int width = 1920;
+    int height = 1080;
+    int rays_per_pixel = 100;
+    int ray_depth = 10;
+};
+
+static void print_usage(const char* prog) {
+    print("Usage: {} [options]\n", prog);
+    print("  --width  N       Image width  (default 1920)\n");
+    print("  --height N       Image height (default 1080)\n");
+    print("  --rays   N       Rays per pixel (default 100)\n");
+    print("  --depth  N       Max ray bounce depth (default 10)\n");
+    print("  --help           Show this message\n");
+}
+
+static RenderConfig parse_args(int argc, char** argv) {
+    RenderConfig cfg;
+    for (int i = 1; i < argc; ++i) {
+        auto need_next = [&]() -> int {
+            if (i + 1 >= argc) {
+                print("Error: {} requires a value\n", argv[i]);
+                std::exit(1);
+            }
+            return std::atoi(argv[++i]);
+        };
+        if (std::strcmp(argv[i], "--width")  == 0) cfg.width          = need_next();
+        else if (std::strcmp(argv[i], "--height") == 0) cfg.height    = need_next();
+        else if (std::strcmp(argv[i], "--rays")   == 0) cfg.rays_per_pixel = need_next();
+        else if (std::strcmp(argv[i], "--depth")  == 0) cfg.ray_depth  = need_next();
+        else if (std::strcmp(argv[i], "--help")   == 0) { print_usage(argv[0]); std::exit(0); }
+        else { print("Unknown argument: {}\n", argv[i]); print_usage(argv[0]); std::exit(1); }
+    }
+    return cfg;
+}
 
 void populate_random_spheres_volume(HittableList& list, int num_spheres, RealRange radius_range, double dx, double dy, double dz, int glass_frequency=12){
     while(num_spheres){
@@ -112,11 +150,15 @@ void populate_hand_crafted_box_plus_embedded_sphere(HittableList& list){
     ));
 }
 
-int main(){
+int main(int argc, char** argv){
+    RenderConfig cfg = parse_args(argc, argv);
+    print("Config: {}x{}, {} rays/pixel, depth {}\n", cfg.width, cfg.height, cfg.rays_per_pixel, cfg.ray_depth);
+
     // Camera viewport(1920*4,1080*4);
-    Camera viewport(1920,1080);
+    Camera viewport(cfg.width, cfg.height);
     // Camera viewport(1920/2,1080/2);
-    // viewport.sampling_per_pixel = 10;
+    viewport.sampling_per_pixel = cfg.rays_per_pixel;
+    viewport.max_trace_depth    = cfg.ray_depth;
     // viewport.sampling_per_pixel = 1000;
     // viewport.ongoing_image_export = 32;
     HittableList spheres;
