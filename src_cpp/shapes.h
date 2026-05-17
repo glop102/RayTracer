@@ -21,6 +21,7 @@ class Hittable{
     virtual ~Hittable() = default;
     virtual bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const = 0;
     virtual BBox bbox() const = 0;
+    virtual void debug_print_tree(int indent=0) const {}
 };
 
 class Triangle:public Hittable{

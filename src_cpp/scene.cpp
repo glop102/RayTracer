@@ -132,6 +132,10 @@ bool Instance::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) 
 
 BBox Instance::bbox() const { return memoized_bbox; }
 
+void Instance::debug_print_tree(int indent) const {
+    bvh->debug_print_tree(indent);
+}
+
 
 
 
@@ -369,7 +373,7 @@ BBox BVH8List::bbox() const {
     return root_bbox;
 }
 
-void BVH8List::debug_print_tree(int) const {
+void BVH8List::debug_print_tree(int indent) const {
     size_t total_leaf_objs = 0;
     size_t max_leaf_size = 0;
     for (auto& leaf : leaves) {
@@ -397,6 +401,9 @@ void BVH8List::debug_print_tree(int) const {
            nodes.size(), leaves.size(), flat_objects.size());
     printf("  Max depth: %d  |  Avg leaf size: %.1f  |  Max leaf size: %zu\n",
            max_depth, avg_leaf, max_leaf_size);
+
+    for (auto& obj : flat_objects)
+        obj->debug_print_tree(indent + 1);
 }
 
 

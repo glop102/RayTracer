@@ -80,4 +80,5 @@ public:
     Instance& translate(const Vector3& offset);
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const override;
     BBox bbox() const override;
+    void debug_print_tree(int indent=0) const override;
 };
