@@ -141,50 +141,12 @@ Vector3 Vector3::random(double min, double max){
     };
 }
 Vector3 Vector3::random_unit_vector(){
-    // Lets assume a 0,1,0 vector to start with, and we will rotate around the z axis
-    // x = x*cosx - y*sinx => -sinx
-    // y = x*sinx + y*cosx => cosx
-    // z = z * 1 => 0
-    //
-    // Next we want to rotate around either the x or y axis
-    // I don't think it matters for which we do, so I am picking the x axis
-    // x = x => -sinx
-    // y = y*cosy - z*siny = y*cosy => cosx*cosy
-    // z = y*siny + z*cosy = y*siny => cosx*siny
-    //
-    // For completeness, I am going to also calculate the rotation around the y axis to see if the math looks equivilent
-    // x = x*cosy + z*siny = x*cosy => -sinx*cosy
-    // y = y => cosx
-    // z = z*cosy - x*siny = x*siny => -sinx*siny
-    // so just due arbitrary personal preference, I like the second rotation to be around the x axis
-
-    // double rotx = random_percentage_distribution()*2.0*PI;
-    // double roty = random_percentage_distribution()*2.0*PI;
-    // double siny,sinx,cosy,cosx;
-    // sincos(rotx,&sinx,&cosx);
-    // sincos(roty,&siny,&cosy);
-    // return {
-    //     -sinx,
-    //     cosx*cosy,
-    //     cosx*siny
-    // };
-
-    // This is an alternative method that randomly attempts to generate one and then check its length
-    // It is slightly faster than the above - on 10 million runs, ~477ms versus ~484ms
-    // while(true){
-    //     Vector3 v = Vector3::random(-1,1);
-    //     double len_sq = v.length_squared();
-    //     if(len_sq<1.0){
-    //         return v / sqrt(len_sq);
-    //     }
-    // }
-
-    // Using tan as a correction factor for picking a random point within a box should make it an even distribution
-    return Vector3{
-        tan(random_neg_pos_one()),
-        tan(random_neg_pos_one()),
-        tan(random_neg_pos_one())
-    }.normalize();
+    while(true){
+        Vector3 v = Vector3::random(-1,1);
+        double len_sq = v.length_squared();
+        if(len_sq < 1.0)
+            return v / sqrt(len_sq);
+    }
 }
 
 Vector3 Vector3::random_vector_on_hemisphere(const Vector3& normal){
