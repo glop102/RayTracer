@@ -1,21 +1,41 @@
-CXX      := g++
+CXX   := g++
+GLSLC := glslc
+
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra
-LDFLAGS  :=
-
-# glfw3 and vulkan provide pkg-config files; vk-bootstrap does not.
-# VMA and GLM are header-only — no link step needed.
-# In a nix build, NIX_CFLAGS_COMPILE and NIX_LDFLAGS already carry the paths
-# from buildInputs, so the pkg-config calls are supplementary rather than load-bearing.
 CXXFLAGS += $(shell pkg-config --cflags glfw3 vulkan)
-LDFLAGS  += $(shell pkg-config --libs glfw3 vulkan) -lvk-bootstrap
+LDFLAGS  := $(shell pkg-config --libs glfw3 vulkan) -lvk-bootstrap
 
-SRCS   := main.cpp vk_context.cpp swapchain.cpp render_pass.cpp
+SRCS   := main.cpp vk_context.cpp swapchain.cpp render_pass.cpp pipeline.cpp
 OBJS   := $(SRCS:.cpp=.o)
 TARGET := raytracer_vk
 
-.PHONY: all clean install
+# Shaders: GLSL -> SPIR-V -> C header (embedded into the binary, no runtime file loading).
+VERT_SPV := triangle_vert.spv
+FRAG_SPV := triangle_frag.spv
+VERT_HDR := triangle_vert.h
+FRAG_HDR := triangle_frag.h
 
-all: $(TARGET)
+.PHONY: all shaders clean install
+
+all: shaders $(TARGET)
+
+shaders: $(VERT_HDR) $(FRAG_HDR)
+
+$(VERT_SPV): shaders/triangle.vert
+	$(GLSLC) --target-env=vulkan1.2 -o $@ $<
+
+$(FRAG_SPV): shaders/triangle.frag
+	$(GLSLC) --target-env=vulkan1.2 -o $@ $<
+
+$(VERT_HDR): $(VERT_SPV)
+	xxd -i $< > $@
+
+$(FRAG_HDR): $(FRAG_SPV)
+	xxd -i $< > $@
+
+# pipeline.cpp includes the generated headers; rebuild it if shaders change.
+pipeline.o: pipeline.cpp $(VERT_HDR) $(FRAG_HDR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(TARGET): $(OBJS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
@@ -27,4 +47,4 @@ install:
 	install -Dm755 $(TARGET) $(DESTDIR)/bin/$(TARGET)
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(VERT_SPV) $(FRAG_SPV) $(VERT_HDR) $(FRAG_HDR)

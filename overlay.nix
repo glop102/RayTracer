@@ -23,6 +23,8 @@ final: prev: {
 
     nativeBuildInputs = with final; [
       pkg-config
+      shaderc
+      xxd
     ];
 
     buildInputs = with final; [
@@ -40,7 +42,7 @@ final: prev: {
     ];
 
     meta = {
-      description = "Vulkan rework of the ray tracer — milestone 1: instance/device/swapchain/renderpass.";
+      description = "Vulkan rework of the ray tracer — milestone 2: triangle.";
     };
   };
 }

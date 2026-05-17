@@ -6,6 +6,7 @@
 #include "vk_context.h"
 #include "swapchain.h"
 #include "render_pass.h"
+#include "pipeline.h"
 
 static constexpr uint32_t WIDTH  = 1280;
 static constexpr uint32_t HEIGHT = 720;
@@ -22,6 +23,7 @@ int main() {
         VkContext  ctx{window};
         Swapchain  swapchain{ctx, WIDTH, HEIGHT};
         RenderPass render_pass{ctx, swapchain};
+        Pipeline   pipeline{ctx, render_pass, swapchain.extent};
 
         const uint32_t image_count = static_cast<uint32_t>(swapchain.images.size());
         VkDevice       dev         = ctx.device.device;
@@ -110,7 +112,8 @@ int main() {
             rp_begin.pClearValues      = &clear_color;
 
             vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-            // Milestone 2 adds draw calls here.
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
             vkEndCommandBuffer(cmd);
 
