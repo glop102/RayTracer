@@ -173,22 +173,21 @@ int main(int argc, char** argv){
     populate_random_sphere_of_spheres(spheres,500,RealRange{2.0,6.0},100);
 
     Stopwatch timer,totalTimer;
-    BVHList world(spheres.objects);
+    BVH8List world(spheres.objects);
     print("BVH Creation Time  {}\n",timer.duration());
-    // world.debug_print_tree();
+    world.debug_print_tree();
 
     //Horizontal Rotation
-    int number_frames = 16;
-    // for(int frame=0; frame < number_frames; frame++){
-        int frame = 4; //58;
+    int number_frames = 120;
+    for(int frame=0; frame < number_frames; frame++){
+        //int frame = 4; //58;
         viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
         viewport.look_at(Vector3{0,0,0});
         timer.reset();
-        // viewport.render(spheres);
         viewport.render(world);
         print("Frame: {} - {}\n",frame,ms_to_human(timer.duration()));
         viewport.threaded_write_to_png(std::format("video/{}.png",frame));
-    // }
+    }
 
     print("\n\nTotal Time {}\n",ms_to_human(totalTimer.duration()));
     return 0;
