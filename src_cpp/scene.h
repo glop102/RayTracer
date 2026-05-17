@@ -43,15 +43,27 @@ class BVH8List : public Hittable {
 };
 
 class TriangleBVH8 : public Hittable {
-    struct Leaf { int obj_start, obj_count; };
+    struct alignas(32) SoALeaf {
+        float p1_x[8], p1_y[8], p1_z[8];
+        float e1_x[8], e1_y[8], e1_z[8];
+        float e2_x[8], e2_y[8], e2_z[8];
+        float nx[8],   ny[8],   nz[8];
+        Material* mat[8];
+        uint8_t count;
+    };
 
-    std::vector<BVH8Node>  nodes;
-    std::vector<Leaf>      leaves;
-    std::vector<Triangle>  flat_triangles;
-    BBox                   root_bbox;
+    std::vector<BVH8Node>                  nodes;
+    std::vector<SoALeaf>                   soa_leaves;
+    std::vector<std::shared_ptr<Material>> material_storage;
+    BBox                                   root_bbox;
 
     void build(int node_idx, std::vector<Triangle> tris, int depth);
     std::pair<std::vector<Triangle>, std::vector<Triangle>> sah_split(std::vector<Triangle>& tris);
+    static int moller_trumbore_8(const SoALeaf& leaf,
+                                  float ox, float oy, float oz,
+                                  float dx, float dy, float dz,
+                                  float tmin, float tmax,
+                                  float* t_out);
     public:
     TriangleBVH8(const TriangleBVH8&) = delete;
     TriangleBVH8(std::vector<Triangle>& triangles, int max_depth = 8);

@@ -414,11 +414,18 @@ void BVH8List::debug_print_tree(int indent) const {
 TriangleBVH8::TriangleBVH8(std::vector<Triangle>& world_tris, int max_depth) {
     if (world_tris.empty()) return;
 
+    for (auto& tri : world_tris) {
+        bool found = false;
+        for (auto& m : material_storage)
+            if (m.get() == tri.material.get()) { found = true; break; }
+        if (!found) material_storage.push_back(tri.material);
+    }
+
     root_bbox = world_tris[0].bbox();
     for (size_t i = 1; i < world_tris.size(); i++)
         root_bbox.absorb(world_tris[i].bbox());
 
-    nodes.reserve(world_tris.size() / 2 + 8);
+    nodes.reserve(world_tris.size() / 4 + 8);
     nodes.emplace_back();
     build(0, world_tris, max_depth);
 }
@@ -490,7 +497,7 @@ void TriangleBVH8::build(int node_idx, std::vector<Triangle> tris, int depth) {
         size_t best_i = 0;
         for (size_t i = 1; i < groups.size(); i++)
             if (groups[i].size() > groups[best_i].size()) best_i = i;
-        if (groups[best_i].size() <= 1) break;
+        if (groups[best_i].size() <= 8) break;  // stop when all groups fit in one SoA leaf
 
         auto [left, right] = sah_split(groups[best_i]);
         if (left.empty() || right.empty()) break;
@@ -512,12 +519,27 @@ void TriangleBVH8::build(int node_idx, std::vector<Triangle> tris, int depth) {
         nodes[node_idx].max_y[i] = (float)gb.max.y;
         nodes[node_idx].max_z[i] = (float)gb.max.z;
 
-        if (depth <= 1 || groups[i].size() <= 4) {
-            int leaf_idx = (int)leaves.size();
-            Leaf leaf{ (int)flat_triangles.size(), (int)groups[i].size() };
-            leaves.push_back(leaf);
-            for (auto& tri : groups[i]) flat_triangles.push_back(std::move(tri));
-            nodes[node_idx].child[i] = ~leaf_idx;
+        if (depth <= 1 || groups[i].size() <= 8) {
+            SoALeaf leaf{};
+            leaf.count = (uint8_t)groups[i].size();
+            for (int j = 0; j < (int)groups[i].size(); j++) {
+                const Triangle& tri = groups[i][j];
+                leaf.p1_x[j] = (float)tri.p1.x;  leaf.p1_y[j] = (float)tri.p1.y;  leaf.p1_z[j] = (float)tri.p1.z;
+                leaf.e1_x[j] = (float)tri.e1.x;  leaf.e1_y[j] = (float)tri.e1.y;  leaf.e1_z[j] = (float)tri.e1.z;
+                leaf.e2_x[j] = (float)tri.e2.x;  leaf.e2_y[j] = (float)tri.e2.y;  leaf.e2_z[j] = (float)tri.e2.z;
+                leaf.nx[j]   = (float)tri.normal.x; leaf.ny[j] = (float)tri.normal.y; leaf.nz[j] = (float)tri.normal.z;
+                leaf.mat[j]  = tri.material.get();
+            }
+            // Pad remaining lanes: e1=e2=0 → a=0 → always misses the epsilon check
+            for (int j = (int)groups[i].size(); j < 8; j++) {
+                leaf.p1_x[j] = leaf.p1_y[j] = leaf.p1_z[j] = 0.0f;
+                leaf.e1_x[j] = leaf.e1_y[j] = leaf.e1_z[j] = 0.0f;
+                leaf.e2_x[j] = leaf.e2_y[j] = leaf.e2_z[j] = 0.0f;
+                leaf.nx[j]   = leaf.ny[j]   = leaf.nz[j]   = 0.0f;
+                leaf.mat[j]  = nullptr;
+            }
+            nodes[node_idx].child[i] = ~(int)soa_leaves.size();
+            soa_leaves.push_back(leaf);
         } else {
             int child_node_idx = (int)nodes.size();
             nodes[node_idx].child[i] = child_node_idx;
@@ -527,11 +549,69 @@ void TriangleBVH8::build(int node_idx, std::vector<Triangle> tris, int depth) {
     }
 }
 
+__attribute__((target("avx2,fma")))
+int TriangleBVH8::moller_trumbore_8(const SoALeaf& leaf,
+                                     float ox, float oy, float oz,
+                                     float dx, float dy, float dz,
+                                     float tmin, float tmax,
+                                     float* t_out)
+{
+    const __m256 vox = _mm256_set1_ps(ox), voy = _mm256_set1_ps(oy), voz = _mm256_set1_ps(oz);
+    const __m256 vdx = _mm256_set1_ps(dx), vdy = _mm256_set1_ps(dy), vdz = _mm256_set1_ps(dz);
+
+    const __m256 e1x = _mm256_load_ps(leaf.e1_x), e1y = _mm256_load_ps(leaf.e1_y), e1z = _mm256_load_ps(leaf.e1_z);
+    const __m256 e2x = _mm256_load_ps(leaf.e2_x), e2y = _mm256_load_ps(leaf.e2_y), e2z = _mm256_load_ps(leaf.e2_z);
+    const __m256 p1x = _mm256_load_ps(leaf.p1_x), p1y = _mm256_load_ps(leaf.p1_y), p1z = _mm256_load_ps(leaf.p1_z);
+
+    // h = dir × e2
+    const __m256 hx = _mm256_fmsub_ps(vdy, e2z, _mm256_mul_ps(vdz, e2y));
+    const __m256 hy = _mm256_fmsub_ps(vdz, e2x, _mm256_mul_ps(vdx, e2z));
+    const __m256 hz = _mm256_fmsub_ps(vdx, e2y, _mm256_mul_ps(vdy, e2x));
+
+    // a = e1 · h; reject if |a| < epsilon (ray parallel to triangle)
+    const __m256 a = _mm256_fmadd_ps(e1x, hx, _mm256_fmadd_ps(e1y, hy, _mm256_mul_ps(e1z, hz)));
+    const __m256 abs_a = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), a);
+    __m256 active = _mm256_cmp_ps(abs_a, _mm256_set1_ps(1e-8f), _CMP_GE_OQ);
+
+    // f = 1/a
+    const __m256 f = _mm256_div_ps(_mm256_set1_ps(1.0f), a);
+
+    // s = origin - p1
+    const __m256 sx = _mm256_sub_ps(vox, p1x);
+    const __m256 sy = _mm256_sub_ps(voy, p1y);
+    const __m256 sz = _mm256_sub_ps(voz, p1z);
+
+    // u = f * (s · h); reject if u < 0 or u > 1
+    const __m256 u = _mm256_mul_ps(f, _mm256_fmadd_ps(sx, hx, _mm256_fmadd_ps(sy, hy, _mm256_mul_ps(sz, hz))));
+    const __m256 zero = _mm256_setzero_ps(), one = _mm256_set1_ps(1.0f);
+    active = _mm256_and_ps(active, _mm256_cmp_ps(u, zero, _CMP_GE_OQ));
+    active = _mm256_and_ps(active, _mm256_cmp_ps(u, one,  _CMP_LE_OQ));
+
+    // q = s × e1
+    const __m256 qx = _mm256_fmsub_ps(sy, e1z, _mm256_mul_ps(sz, e1y));
+    const __m256 qy = _mm256_fmsub_ps(sz, e1x, _mm256_mul_ps(sx, e1z));
+    const __m256 qz = _mm256_fmsub_ps(sx, e1y, _mm256_mul_ps(sy, e1x));
+
+    // v = f * (dir · q); reject if v < 0 or u+v > 1
+    const __m256 v = _mm256_mul_ps(f, _mm256_fmadd_ps(vdx, qx, _mm256_fmadd_ps(vdy, qy, _mm256_mul_ps(vdz, qz))));
+    active = _mm256_and_ps(active, _mm256_cmp_ps(v, zero, _CMP_GE_OQ));
+    active = _mm256_and_ps(active, _mm256_cmp_ps(_mm256_add_ps(u, v), one, _CMP_LE_OQ));
+
+    // t = f * (e2 · q); reject if outside [tmin, tmax]
+    const __m256 t = _mm256_mul_ps(f, _mm256_fmadd_ps(e2x, qx, _mm256_fmadd_ps(e2y, qy, _mm256_mul_ps(e2z, qz))));
+    active = _mm256_and_ps(active, _mm256_cmp_ps(t, _mm256_set1_ps(tmin), _CMP_GT_OQ));
+    active = _mm256_and_ps(active, _mm256_cmp_ps(t, _mm256_set1_ps(tmax), _CMP_LT_OQ));
+
+    _mm256_storeu_ps(t_out, t);
+    return _mm256_movemask_ps(active);
+}
+
 bool TriangleBVH8::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const {
     if (nodes.empty()) return false;
 
-    float ox  = (float)ray.origin.x,        oy  = (float)ray.origin.y,        oz  = (float)ray.origin.z;
-    float idx = (float)ray.inv_direction.x,  idy = (float)ray.inv_direction.y,  idz = (float)ray.inv_direction.z;
+    const float ox  = (float)ray.origin.x,       oy  = (float)ray.origin.y,       oz  = (float)ray.origin.z;
+    const float dx  = (float)ray.direction.x,     dy  = (float)ray.direction.y,     dz  = (float)ray.direction.z;
+    const float idx = (float)ray.inv_direction.x, idy = (float)ray.inv_direction.y, idz = (float)ray.inv_direction.z;
 
     struct StackEntry { int node_idx; float t_near; };
     thread_local std::vector<StackEntry> stack;
@@ -540,6 +620,7 @@ bool TriangleBVH8::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& r
 
     bool found_hit = false;
     alignas(32) float tmin_out[8];
+    alignas(32) float t_out[8];
 
     while (!stack.empty()) {
         auto [ni, t_near_entry] = stack.back();
@@ -571,9 +652,30 @@ bool TriangleBVH8::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& r
         for (int h = 0; h < nh; h++) {
             int child = hits[h].child;
             if (child < 0) {
-                const Leaf& leaf = leaves[~child];
-                for (int j = leaf.obj_start; j < leaf.obj_start + leaf.obj_count; j++)
-                    found_hit |= flat_triangles[j].hit(ray, allowed_distance, rec);
+                const SoALeaf& leaf = soa_leaves[~child];
+                int lmask = moller_trumbore_8(leaf, ox, oy, oz, dx, dy, dz,
+                                              (float)allowed_distance.min,
+                                              (float)allowed_distance.max, t_out);
+                lmask &= (1 << leaf.count) - 1;
+                for (int m = lmask; m; m &= m-1) {
+                    int j = __builtin_ctz(m);
+                    double t = (double)t_out[j];
+                    if (t < allowed_distance.max) {
+                        allowed_distance.max = t;
+                        rec.distanceScale     = t;
+                        rec.intersection_point = ray.at(t);
+                        rec.material           = leaf.mat[j];
+                        // dot(dir, stored_normal) < 0 → front face (same sign convention as scalar path)
+                        if (dx*leaf.nx[j] + dy*leaf.ny[j] + dz*leaf.nz[j] < 0.0f) {
+                            rec.normal     = {leaf.nx[j], leaf.ny[j], leaf.nz[j]};
+                            rec.front_face = true;
+                        } else {
+                            rec.normal     = {-leaf.nx[j], -leaf.ny[j], -leaf.nz[j]};
+                            rec.front_face = false;
+                        }
+                        found_hit = true;
+                    }
+                }
             } else {
                 stack.push_back({child, hits[h].tmin});
             }
@@ -587,11 +689,11 @@ BBox TriangleBVH8::bbox() const {
 }
 
 void TriangleBVH8::debug_print_tree(int) const {
-    size_t total_leaf_tris = 0;
+    size_t total_tris = 0;
     size_t max_leaf_size = 0;
-    for (auto& leaf : leaves) {
-        total_leaf_tris += leaf.obj_count;
-        if ((size_t)leaf.obj_count > max_leaf_size) max_leaf_size = leaf.obj_count;
+    for (auto& leaf : soa_leaves) {
+        total_tris += leaf.count;
+        if (leaf.count > max_leaf_size) max_leaf_size = leaf.count;
     }
 
     int max_depth = 0;
@@ -607,9 +709,9 @@ void TriangleBVH8::debug_print_tree(int) const {
                 bfs_stack.push_back({node.child[i], d+1});
     }
 
-    double avg_leaf = leaves.empty() ? 0.0 : (double)total_leaf_tris / leaves.size();
+    double avg_leaf = soa_leaves.empty() ? 0.0 : (double)total_tris / soa_leaves.size();
     printf("TriangleBVH8: %zu nodes, %zu leaves, %zu triangles\n",
-           nodes.size(), leaves.size(), flat_triangles.size());
+           nodes.size(), soa_leaves.size(), total_tris);
     printf("  Max depth: %d  |  Avg leaf size: %.1f  |  Max leaf size: %zu\n",
            max_depth, avg_leaf, max_leaf_size);
 }
