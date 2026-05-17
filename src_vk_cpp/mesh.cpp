@@ -2,6 +2,7 @@
 #include "vk_context.h"
 
 #include <glm/glm.hpp>
+#include <glm/geometric.hpp>
 
 #include <cstring>
 #include <fstream>
@@ -70,6 +71,25 @@ static void load_ply(const std::string& path,
             c = d;
         }
         std::getline(f, line);
+    }
+}
+
+// Area-weighted vertex normal accumulation — smoother than angle-weighted for
+// meshes like the Stanford bunny where triangle sizes vary significantly.
+static void compute_normals(const std::vector<glm::vec3>& verts,
+                             const std::vector<uint32_t>&  inds,
+                             std::vector<glm::vec3>&       normals) {
+    normals.assign(verts.size(), glm::vec3(0.0f));
+    for (size_t i = 0; i < inds.size(); i += 3) {
+        uint32_t i0 = inds[i], i1 = inds[i+1], i2 = inds[i+2];
+        glm::vec3 face_n = glm::cross(verts[i1] - verts[i0], verts[i2] - verts[i0]);
+        normals[i0] += face_n;
+        normals[i1] += face_n;
+        normals[i2] += face_n;
+    }
+    for (auto& n : normals) {
+        float len = glm::length(n);
+        if (len > 1e-6f) n /= len;
     }
 }
 
@@ -144,8 +164,21 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
     vertex_count = static_cast<uint32_t>(verts.size());
     index_count  = static_cast<uint32_t>(inds.size());
 
+    // Compute smooth normals and interleave with positions: {x,y,z, nx,ny,nz}.
+    // The BLAS reads only the position portion (stride = 6 floats).
+    // The closest-hit shader reads normals at offset +3.
+    std::vector<glm::vec3> normals;
+    compute_normals(verts, inds, normals);
+
+    std::vector<float> vdata;
+    vdata.reserve(verts.size() * 6);
+    for (size_t i = 0; i < verts.size(); i++) {
+        vdata.push_back(verts[i].x);   vdata.push_back(verts[i].y);   vdata.push_back(verts[i].z);
+        vdata.push_back(normals[i].x); vdata.push_back(normals[i].y); vdata.push_back(normals[i].z);
+    }
+
     upload_buffer(ctx, VERTEX_USAGE,
-                  verts.data(), verts.size() * sizeof(glm::vec3),
+                  vdata.data(), vdata.size() * sizeof(float),
                   vertex_buf, vertex_alloc);
 
     upload_buffer(ctx, INDEX_USAGE,

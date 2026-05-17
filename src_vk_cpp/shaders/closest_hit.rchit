@@ -3,11 +3,10 @@
 #extension GL_EXT_buffer_reference                       : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-// Buffer reference types for reading mesh data via raw device addresses.
+// Vertex buffer is interleaved {x,y,z, nx,ny,nz} — stride 6 floats (24 bytes).
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer FloatBuf { float d[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer UintBuf  { uint  d[]; };
 
-// Scene description SSBOs (indexed by gl_InstanceCustomIndexEXT / mesh_index).
 struct MeshRef     { uint64_t vertex_addr; uint64_t index_addr; };
 struct GpuMaterial { vec3 diffuse; float roughness; vec3 specular; float _pad0; vec3 emissive; float _pad1; };
 struct InstanceData { uint mesh_idx; uint mat_idx; uint _pad[2]; };
@@ -30,13 +29,11 @@ layout(location = 0) rayPayloadInEXT HitResult payload;
 hitAttributeEXT vec2 bary;
 
 void main() {
-    // Resolve instance → mesh + material.
     uint         iid  = gl_InstanceCustomIndexEXT;
     InstanceData inst = instances.d[iid];
     MeshRef      mesh = mesh_refs.d[inst.mesh_idx];
     GpuMaterial  mat  = materials.d[inst.mat_idx];
 
-    // Fetch the triangle's vertex positions via buffer_reference.
     FloatBuf verts = FloatBuf(mesh.vertex_addr);
     UintBuf  inds  = UintBuf(mesh.index_addr);
 
@@ -45,14 +42,16 @@ void main() {
     uint i1 = inds.d[base + 1u];
     uint i2 = inds.d[base + 2u];
 
-    vec3 v0 = vec3(verts.d[i0*3u], verts.d[i0*3u+1u], verts.d[i0*3u+2u]);
-    vec3 v1 = vec3(verts.d[i1*3u], verts.d[i1*3u+1u], verts.d[i1*3u+2u]);
-    vec3 v2 = vec3(verts.d[i2*3u], verts.d[i2*3u+1u], verts.d[i2*3u+2u]);
+    // Fetch per-vertex smooth normals from the interleaved buffer (offset +3).
+    vec3 n0 = vec3(verts.d[i0*6u+3u], verts.d[i0*6u+4u], verts.d[i0*6u+5u]);
+    vec3 n1 = vec3(verts.d[i1*6u+3u], verts.d[i1*6u+4u], verts.d[i1*6u+5u]);
+    vec3 n2 = vec3(verts.d[i2*6u+3u], verts.d[i2*6u+4u], verts.d[i2*6u+5u]);
 
-    // Face normal in object space → world space.
-    // mat3(gl_ObjectToWorldEXT) is correct for uniform-scale transforms.
-    vec3 obj_normal   = normalize(cross(v1 - v0, v2 - v0));
-    vec3 world_normal = normalize(mat3(gl_ObjectToWorldEXT) * obj_normal);
+    // Barycentric interpolation: bary.x = u, bary.y = v, w = 1 - u - v.
+    float w  = 1.0 - bary.x - bary.y;
+    vec3 interp_n     = normalize(w * n0 + bary.x * n1 + bary.y * n2);
+    vec3 world_normal = normalize(mat3(gl_ObjectToWorldEXT) * interp_n);
+
     if (gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT)
         world_normal = -world_normal;
 
