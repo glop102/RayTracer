@@ -220,8 +220,8 @@ BBox BVHList::bbox()const{
 }
 
 bool BVHList::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    std::vector<std::pair<const BVHList*,RealRange>> stack;
-    stack.reserve(this->max_depth_allowed *2 +2);
+    thread_local std::vector<std::pair<const BVHList*,RealRange>> stack;
+    stack.clear();
     // Convenient lambda to check if a given intersection distance range is actaully a hit (as a bool)
     // Captures the allowed_distance which is modified in place by per-object hits
     auto hits_aabb_dists = [&allowed_distance](RealRange& int_dists){

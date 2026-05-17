@@ -57,6 +57,12 @@ class Ray{
     public:
     Point3 origin;
     Vector3 direction;
+    Vector3 inv_direction; // precomputed 1/direction for fast AABB intersection
+    Ray() = default;
+    Ray(Point3 origin, Vector3 direction)
+        : origin(origin), direction(direction)
+        , inv_direction{1.0/direction.x, 1.0/direction.y, 1.0/direction.z} {}
+    void recompute_inv_direction(){ inv_direction = {1.0/direction.x, 1.0/direction.y, 1.0/direction.z}; }
     Vector3 at(double distanceScale)const;
     void debug_print()const;
 };

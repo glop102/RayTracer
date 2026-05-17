@@ -278,8 +278,8 @@ RealRange BBox::intersection_distance(const Ray& ray)const{
 
     // MAX and MIN start at the top here meaning absolute distance from the origin for the corners of the AABB
     // dsmin and dsmax are then sorting the near/far for time-of-flight distances
-    auto dmin = (min - ray.origin)/ray.direction;
-    auto dmax = (max - ray.origin)/ray.direction;
+    auto dmin = (min - ray.origin)*ray.inv_direction;
+    auto dmax = (max - ray.origin)*ray.inv_direction;
 
     Vector3 dsmin,dsmax; // sorted versions ie min is the min of both axes
     for(int i=0; i<3; i++){
