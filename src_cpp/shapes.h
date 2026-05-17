@@ -49,3 +49,4 @@ class Sphere:public Hittable{
 };
 
 std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& center, std::shared_ptr<Material> material);
+std::vector<std::shared_ptr<Triangle>> make_box(const BBox& box, std::shared_ptr<Material> material);

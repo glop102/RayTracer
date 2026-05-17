@@ -90,18 +90,24 @@ void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, Real
 void populate_triangles_crafted_test(HittableList& list){
     auto glass = std::make_shared<PureTransparentMaterial>(1.5);
 
-    // for ( auto& cube_tri : make_cube( 3.0, Point3{6.0,0.0,0.0}, AluminiumDull) ) {
-    //     list.add(cube_tri);
-    // }
-    // for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,12.0,0.0}, MetalShiny) ) {
-    //     list.add(cube_tri);
-    // }
-    // for ( auto& cube_tri : make_cube( 3.0, Point3{0.0,0.0,6.0}, glass) ) {
-    //     list.add(cube_tri);
-    // }
+    // Load bunny into a temporary list so we can measure its bbox
+    HittableList bunny_list;
+    load_ply_file("bunny/reconstruction/bun_zipper.ply", bunny_list, AluminiumDull, 100.0, Point3{0,-5.0,0});
 
-    // load_ply_file("bunny/reconstruction/bun_zipper.ply", list, glass, 100.0, Point3 {0,-5.0,0});
-    load_ply_file("bunny/reconstruction/bun_zipper.ply", list, AluminiumDull, 100.0, Point3 {0,-5.0,0});
+    // Build a glass box snugly around the bunny using its actual bbox
+    BBox bunny_bbox = bunny_list.bbox();
+    // Add a small padding so the bunny doesn't clip the glass surface
+    double pad = 0.3;
+    BBox padded{
+        {bunny_bbox.min.x - pad, bunny_bbox.min.y - pad, bunny_bbox.min.z - pad},
+        {bunny_bbox.max.x + pad, bunny_bbox.max.y + pad, bunny_bbox.max.z + pad}
+    };
+    for (auto& tri : make_box(padded, glass))
+        list.add(tri);
+
+    // Add bunny triangles to main list
+    for (auto& obj : bunny_list.objects)
+        list.add(obj);
 }
 void populate_sphere_crafted_test(HittableList& list){
     // "Horizon"

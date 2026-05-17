@@ -139,6 +139,48 @@ bool Sphere::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)con
 //===================================================================
 //  Utilities
 //===================================================================
+std::vector<std::shared_ptr<Triangle>> make_box(const BBox& box, std::shared_ptr<Material> material) {
+    // 8 corners of the box
+    const Point3& lo = box.min;
+    const Point3& hi = box.max;
+    //      lo.x lo.y lo.z = 000
+    //      hi.x lo.y lo.z = 100
+    //      lo.x hi.y lo.z = 010
+    //      hi.x hi.y lo.z = 110
+    //      lo.x lo.y hi.z = 001
+    //      hi.x lo.y hi.z = 101
+    //      lo.x hi.y hi.z = 011
+    //      hi.x hi.y hi.z = 111
+    Point3 p000{lo.x, lo.y, lo.z};
+    Point3 p100{hi.x, lo.y, lo.z};
+    Point3 p010{lo.x, hi.y, lo.z};
+    Point3 p110{hi.x, hi.y, lo.z};
+    Point3 p001{lo.x, lo.y, hi.z};
+    Point3 p101{hi.x, lo.y, hi.z};
+    Point3 p011{lo.x, hi.y, hi.z};
+    Point3 p111{hi.x, hi.y, hi.z};
+    return {
+        // -X face (normal pointing -x), CCW from outside
+        std::make_shared<Triangle>(p000, p010, p011, material),
+        std::make_shared<Triangle>(p011, p001, p000, material),
+        // +X face (normal pointing +x)
+        std::make_shared<Triangle>(p100, p101, p111, material),
+        std::make_shared<Triangle>(p111, p110, p100, material),
+        // -Y face (normal pointing -y)
+        std::make_shared<Triangle>(p000, p001, p101, material),
+        std::make_shared<Triangle>(p101, p100, p000, material),
+        // +Y face (normal pointing +y)
+        std::make_shared<Triangle>(p010, p110, p111, material),
+        std::make_shared<Triangle>(p111, p011, p010, material),
+        // -Z face (normal pointing -z)
+        std::make_shared<Triangle>(p000, p100, p110, material),
+        std::make_shared<Triangle>(p110, p010, p000, material),
+        // +Z face (normal pointing +z)
+        std::make_shared<Triangle>(p001, p011, p111, material),
+        std::make_shared<Triangle>(p111, p101, p001, material),
+    };
+}
+
 std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& center, std::shared_ptr<Material> material) {
     /*
     We want counter-clockwise on every face
