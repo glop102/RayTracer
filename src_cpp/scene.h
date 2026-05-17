@@ -1,10 +1,18 @@
 #pragma once
 #include <vector>
 #include <memory>
+#include <cstdint>
 #include "shapes.h"
 #include "utils.h"
 
 using ObjList = std::vector<std::shared_ptr<Hittable>>;
+
+struct alignas(32) BVH8Node {
+    float min_x[8], min_y[8], min_z[8];
+    float max_x[8], max_y[8], max_z[8];
+    int32_t child[8];
+    uint8_t num_children;
+};
 
 class HittableList:public Hittable{
     public:
@@ -15,31 +23,8 @@ class HittableList:public Hittable{
     BBox bbox()const;
 };
 
-class BVHList:public Hittable{
-    protected:
-    BVHList *left, *right;
-    ObjList objects;
-    int max_depth_allowed; // how much more depth is allowed
-    BBox memoized_bbox;
-
-    public:
-    BVHList(const BVHList& other) = delete;
-    BVHList(ObjList& world_objects,int max_depth = 25);
-    ~BVHList();
-    bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const;
-    BBox bbox()const;
-    bool isLeaf()const;
-    void debug_print_tree(int indent=0)const;
-};
-
 
 class BVH8List : public Hittable {
-    struct alignas(32) BVH8Node {
-        float min_x[8], min_y[8], min_z[8];  // SoA: all 8 children's bounds by axis
-        float max_x[8], max_y[8], max_z[8];  // 32-byte aligned for AVX2 _mm256_load_ps
-        int32_t child[8];   // >= 0: node index, < 0: ~index into leaves[]
-        uint8_t num_children;
-    };
     struct Leaf { int obj_start, obj_count; };
 
     std::vector<BVH8Node> nodes;
@@ -49,14 +34,27 @@ class BVH8List : public Hittable {
 
     void build(int node_idx, ObjList objs, int depth);
     std::pair<ObjList,ObjList> sah_split(ObjList& objs);
-    static int aabb_test_8(const BVH8Node& node,
-                           float ox, float oy, float oz,
-                           float idx, float idy, float idz,
-                           float t_near, float t_far,
-                           float* tmin_out);
     public:
     BVH8List(const BVH8List&) = delete;
     BVH8List(ObjList& world_objects, int max_depth = 8);
+    bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const;
+    BBox bbox() const;
+    void debug_print_tree(int = 0) const;
+};
+
+class TriangleBVH8 : public Hittable {
+    struct Leaf { int obj_start, obj_count; };
+
+    std::vector<BVH8Node>  nodes;
+    std::vector<Leaf>      leaves;
+    std::vector<Triangle>  flat_triangles;
+    BBox                   root_bbox;
+
+    void build(int node_idx, std::vector<Triangle> tris, int depth);
+    std::pair<std::vector<Triangle>, std::vector<Triangle>> sah_split(std::vector<Triangle>& tris);
+    public:
+    TriangleBVH8(const TriangleBVH8&) = delete;
+    TriangleBVH8(std::vector<Triangle>& triangles, int max_depth = 8);
     bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const;
     BBox bbox() const;
     void debug_print_tree(int = 0) const;
@@ -67,7 +65,7 @@ class BVH8List : public Hittable {
 // Build the geometry in object space, then rotate_y / translate to place it in the scene.
 // Transforms compose left-to-right: rotate first, then translate.
 class Instance : public Hittable {
-    std::shared_ptr<BVH8List> bvh;
+    std::shared_ptr<Hittable> bvh;
     double R[3][3];      // rotation: object → world
     Vector3 translation; // world-space offset applied after rotation
     BBox memoized_bbox;
