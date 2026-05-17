@@ -12,7 +12,7 @@ struct HitRecord{
     double distanceScale;
     Vector3 normal;
     bool front_face;
-    std::shared_ptr<Material> material;
+    Material* material;
 };
 
 

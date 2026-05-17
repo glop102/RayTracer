@@ -58,7 +58,7 @@ bool Triangle::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)c
     allowed_distance.max = t;
     rec.distanceScale = t;
     rec.intersection_point = ray.at(t);
-    rec.material = material;
+    rec.material = material.get();
     // a > 0 means ray hits the front face (opposite sign to normal.dot(ray.direction))
     if (a > 0.0) {
         rec.normal = normal;
@@ -124,7 +124,7 @@ bool Sphere::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)con
 
     rec.distanceScale = root;
     rec.intersection_point = ray.at(root);
-    rec.material = material;
+    rec.material = material.get();
     rec.normal = (rec.intersection_point - center) / radius;
     if(ray.direction.dot(rec.normal)>0.0){
         rec.front_face = false;
