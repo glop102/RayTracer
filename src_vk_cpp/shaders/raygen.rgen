@@ -15,7 +15,10 @@ layout(location = 0) rayPayloadEXT vec3 payload;
 
 void main() {
     // Map pixel center to [0,1] UV.
+    // Flip Y: gl_LaunchIDEXT y=0 is the top of the image, but the camera
+    // model uses v pointing up, so lower_left+vertical goes bottom→top.
     vec2 uv = (vec2(gl_LaunchIDEXT.xy) + 0.5) / vec2(gl_LaunchSizeEXT.xy);
+    uv.y = 1.0 - uv.y;
 
     vec3 origin = cam.origin.xyz;
     vec3 dir    = normalize(cam.lower_left.xyz
