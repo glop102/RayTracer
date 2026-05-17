@@ -1,5 +1,6 @@
 #pragma once
 #include <vulkan/vulkan.h>
+#include <optional>
 #include <vector>
 
 struct VkContext;
@@ -17,8 +18,10 @@ struct FrameSync {
         VkCommandBuffer cmd;
     };
 
-    Frame acquire(VkSwapchainKHR swapchain);
-    void  submit_and_present(VkQueue graphics, VkQueue present, VkSwapchainKHR swapchain);
+    // Returns nullopt if the swapchain is out of date and must be recreated.
+    std::optional<Frame> acquire(VkSwapchainKHR swapchain);
+    // Returns the VkResult from vkQueuePresentKHR (caller checks SUBOPTIMAL/OUT_OF_DATE).
+    VkResult submit_and_present(VkQueue graphics, VkQueue present, VkSwapchainKHR swapchain);
 
     FrameSync(VkContext& ctx, uint32_t image_count);
     ~FrameSync();

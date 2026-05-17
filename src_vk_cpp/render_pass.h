@@ -17,6 +17,8 @@ struct RenderPass {
     RenderPass(VkContext& ctx, Swapchain& swapchain);
     ~RenderPass();
 
+    void rebuild_framebuffers(Swapchain& swapchain);
+
     RenderPass(const RenderPass&)            = delete;
     RenderPass& operator=(const RenderPass&) = delete;
 };

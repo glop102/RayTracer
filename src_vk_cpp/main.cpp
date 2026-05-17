@@ -13,8 +13,13 @@ static constexpr uint32_t HEIGHT = 720;
 int main() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan RT", nullptr, nullptr);
+
+    bool resize_needed = false;
+    glfwSetWindowUserPointer(window, &resize_needed);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
+        *static_cast<bool*>(glfwGetWindowUserPointer(w)) = true;
+    });
 
     // Scope ensures all Vulkan destructors run before glfwDestroyWindow.
     // GLFW requires the surface be destroyed first.
@@ -28,7 +33,21 @@ int main() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
-            auto [image_index, cmd] = frame_sync.acquire(swapchain.handle);
+            int fw, fh;
+            glfwGetFramebufferSize(window, &fw, &fh);
+            if (fw == 0 || fh == 0) continue; // minimized — nothing to render
+
+            if (resize_needed) {
+                resize_needed = false;
+                vkDeviceWaitIdle(ctx.device.device);
+                swapchain.recreate(ctx, static_cast<uint32_t>(fw), static_cast<uint32_t>(fh));
+                render_pass.rebuild_framebuffers(swapchain);
+                continue;
+            }
+
+            auto frame_opt = frame_sync.acquire(swapchain.handle);
+            if (!frame_opt) { resize_needed = true; continue; }
+            auto [image_index, cmd] = *frame_opt;
 
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
@@ -60,7 +79,11 @@ int main() {
             if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
                 throw std::runtime_error("Failed to end command buffer");
 
-            frame_sync.submit_and_present(ctx.graphics_queue, ctx.present_queue, swapchain.handle);
+            VkResult present_result = frame_sync.submit_and_present(
+                ctx.graphics_queue, ctx.present_queue, swapchain.handle);
+            if (present_result == VK_ERROR_OUT_OF_DATE_KHR ||
+                present_result == VK_SUBOPTIMAL_KHR)
+                resize_needed = true;
         }
 
         vkDeviceWaitIdle(ctx.device.device);

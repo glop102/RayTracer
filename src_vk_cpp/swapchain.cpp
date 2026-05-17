@@ -29,6 +29,36 @@ Swapchain::Swapchain(VkContext& ctx, uint32_t width, uint32_t height) {
     extent       = swapchain.extent;
 }
 
+void Swapchain::recreate(VkContext& ctx, uint32_t width, uint32_t height) {
+    for (auto view : image_views)
+        vkDestroyImageView(device, view, nullptr);
+    image_views.clear();
+
+    auto swap_ret = vkb::SwapchainBuilder{ctx.device}
+        .set_desired_format({VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+        .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
+        .add_fallback_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+        .set_desired_extent(width, height)
+        .set_old_swapchain(swapchain)
+        .build();
+    if (!swap_ret)
+        throw std::runtime_error("Swapchain recreation failed: " + swap_ret.error().message());
+
+    vkb::destroy_swapchain(swapchain);
+    swapchain    = swap_ret.value();
+    handle       = swapchain.swapchain;
+    extent       = swapchain.extent;
+    image_format = swapchain.image_format;
+
+    auto imgs = swapchain.get_images();
+    if (!imgs) throw std::runtime_error("Failed to get swapchain images");
+    images = imgs.value();
+
+    auto views = swapchain.get_image_views();
+    if (!views) throw std::runtime_error("Failed to get swapchain image views");
+    image_views = views.value();
+}
+
 Swapchain::~Swapchain() {
     for (auto view : image_views)
         vkDestroyImageView(device, view, nullptr);

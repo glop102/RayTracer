@@ -1,6 +1,7 @@
 #include "frame_sync.h"
 #include "vk_context.h"
 
+#include <optional>
 #include <stdexcept>
 
 FrameSync::FrameSync(VkContext& ctx, uint32_t image_count) {
@@ -44,12 +45,16 @@ FrameSync::~FrameSync() {
     // cmd_bufs are implicitly freed when the command pool is destroyed in VkContext
 }
 
-FrameSync::Frame FrameSync::acquire(VkSwapchainKHR swapchain) {
+std::optional<FrameSync::Frame> FrameSync::acquire(VkSwapchainKHR swapchain) {
     current_acquire = free_acquire_sems.back();
     free_acquire_sems.pop_back();
 
     VkResult acquire_result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
                                                      current_acquire, VK_NULL_HANDLE, &current_image);
+    if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
+        free_acquire_sems.push_back(current_acquire);
+        return std::nullopt;
+    }
     if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
         throw std::runtime_error("Failed to acquire swapchain image");
 
@@ -66,10 +71,10 @@ FrameSync::Frame FrameSync::acquire(VkSwapchainKHR swapchain) {
     if (vkResetCommandBuffer(cmd, 0) != VK_SUCCESS)
         throw std::runtime_error("Command buffer reset failed");
 
-    return {current_image, cmd};
+    return Frame{current_image, cmd};
 }
 
-void FrameSync::submit_and_present(VkQueue graphics, VkQueue present, VkSwapchainKHR swapchain) {
+VkResult FrameSync::submit_and_present(VkQueue graphics, VkQueue present, VkSwapchainKHR swapchain) {
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
     VkSubmitInfo submit{};
@@ -91,7 +96,5 @@ void FrameSync::submit_and_present(VkQueue graphics, VkQueue present, VkSwapchai
     present_info.swapchainCount     = 1;
     present_info.pSwapchains        = &swapchain;
     present_info.pImageIndices      = &current_image;
-    VkResult present_result = vkQueuePresentKHR(present, &present_info);
-    if (present_result != VK_SUCCESS && present_result != VK_SUBOPTIMAL_KHR)
-        throw std::runtime_error("Failed to present");
+    return vkQueuePresentKHR(present, &present_info);
 }

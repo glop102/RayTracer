@@ -17,6 +17,8 @@ struct Swapchain {
     Swapchain(VkContext& ctx, uint32_t width, uint32_t height);
     ~Swapchain();
 
+    void recreate(VkContext& ctx, uint32_t width, uint32_t height);
+
     Swapchain(const Swapchain&)            = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 };

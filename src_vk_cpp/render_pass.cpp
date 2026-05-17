@@ -65,6 +65,29 @@ RenderPass::RenderPass(VkContext& ctx, Swapchain& swapchain) {
     }
 }
 
+void RenderPass::rebuild_framebuffers(Swapchain& swapchain) {
+    for (auto fb : framebuffers)
+        vkDestroyFramebuffer(device, fb, nullptr);
+    framebuffers.clear();
+
+    framebuffers.resize(swapchain.image_views.size());
+    for (size_t i = 0; i < swapchain.image_views.size(); i++) {
+        VkImageView attachments[] = {swapchain.image_views[i]};
+
+        VkFramebufferCreateInfo fb_info{};
+        fb_info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fb_info.renderPass      = render_pass;
+        fb_info.attachmentCount = 1;
+        fb_info.pAttachments    = attachments;
+        fb_info.width           = swapchain.extent.width;
+        fb_info.height          = swapchain.extent.height;
+        fb_info.layers          = 1;
+
+        if (vkCreateFramebuffer(device, &fb_info, nullptr, &framebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Framebuffer creation failed");
+    }
+}
+
 RenderPass::~RenderPass() {
     for (auto fb : framebuffers)
         vkDestroyFramebuffer(device, fb, nullptr);
