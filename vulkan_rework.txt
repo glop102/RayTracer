@@ -40,28 +40,33 @@ Milestones:
        callback sets a flag; main loop calls Swapchain::recreate() +
        RenderPass::rebuild_framebuffers() then continues.
 
-  3. [IN PROGRESS] Load and draw the bunny mesh (vertex buffer, index buffer, depth buffer)
+  3. [DONE] Load and draw the bunny mesh (vertex buffer, index buffer, depth buffer)
        Parse existing PLY files from bunny/reconstruction/ into CPU-side
        glm::vec3 vertex and uint32_t index arrays. Upload to device-local VkBuffers
        via VMA staging buffers (TRANSFER_SRC CPU → TRANSFER_DST DEVICE_LOCAL).
        Add depth attachment (VK_FORMAT_D32_SFLOAT) to the render pass; depth image
        owned by RenderPass and recreated alongside framebuffers on resize.
-       Camera MVP passed as a push constant (mat4, vertex stage). Shader outputs
-       a height-based color gradient so the mesh is visually meaningful without
-       requiring normals.
+       Camera MVP passed as a push constant (mat4, vertex stage). Fragment shader
+       computes face normals via dFdx/dFdy on world_pos and maps them to RGB —
+       no CPU-side normal computation needed, gives flat-shaded face visualization.
+       Note: Stanford bunny PLY uses X-up convention (not Y-up as assumed).
 
-  4. Orbit camera with a UBO (uniform buffer object)
-       Migrate camera from push constant to a persistently-mapped VkBuffer
-       (VMA_MEMORY_USAGE_CPU_TO_GPU). One descriptor set, one binding. Add GLFW
-       mouse/scroll callbacks for orbit and zoom. Aspect ratio updates automatically
-       on resize since it is derived from swapchain.extent each frame.
+  4. [DONE] Orbit camera with a UBO (uniform buffer object)
+       Camera struct owns a persistently-mapped VkBuffer (VMA AUTO +
+       HOST_ACCESS_SEQUENTIAL_WRITE + MAPPED), descriptor set layout (binding 0,
+       vertex stage), descriptor pool, and set. Orbit state is spherical
+       (theta/phi/radius + target); left-drag orbits, scroll zooms with radius
+       clamped to [0.05, 2.0]. GLFW callbacks route through a small AppState
+       struct stored in the window user pointer alongside the resize flag.
+       Pipeline layout uses the camera descriptor set layout; push constant
+       removed. Vertex shader reads MVP from UBO at set=0 binding=0.
 
-This is ~1500 lines of setup but you only write it once. Every subsequent stage
+This is ~1800 lines of setup but you only write it once. Every subsequent stage
 reuses the same device/swapchain/command buffer scaffolding.
 
 Things to skip for now (add only when a later stage demands them):
   - Multiple render passes or subpasses
-  - Descriptor sets beyond the single camera UBO (milestone 4)
+  - Additional descriptor sets beyond the camera UBO
   - Push constants, specialization constants, pipeline cache
 
 Skip validation layers in a hurry, but you will regret it. Enable them from day one.
