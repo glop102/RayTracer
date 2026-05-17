@@ -1,10 +1,5 @@
 #include "materials.h"
 
-void Material::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{}
-Color Material::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
-    return Black;
-}
-
 // BRDMaterial::BRDMaterial(const BRDMaterial& other)
 // : diffuse(other.diffuse), specular(other.specular), emissive(other.emissive), specular_tightness(other.specular_tightness), roughness(other.roughness)
 // {}

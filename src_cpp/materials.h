@@ -7,8 +7,9 @@ class HitRecord;
 
 class Material{
     public:
-    virtual void scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const;
-    virtual Color extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const;
+    virtual void scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const = 0;
+    virtual Color extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const = 0;
+    virtual ~Material() = default;
 };
 
 class BRDMaterial:public Material{

@@ -38,8 +38,14 @@ static RenderConfig parse_args(int argc, char** argv) {
             }
             return std::atoi(argv[++i]);
         };
-        if (std::strcmp(argv[i], "--width")  == 0) cfg.width          = need_next();
-        else if (std::strcmp(argv[i], "--height") == 0) cfg.height    = need_next();
+        if (std::strcmp(argv[i], "--width")  == 0) {
+            cfg.width = need_next();
+            if (cfg.width < 2) { print("Error: --width must be at least 2\n"); std::exit(1); }
+        }
+        else if (std::strcmp(argv[i], "--height") == 0) {
+            cfg.height = need_next();
+            if (cfg.height < 2) { print("Error: --height must be at least 2\n"); std::exit(1); }
+        }
         else if (std::strcmp(argv[i], "--rays")   == 0) cfg.rays_per_pixel = need_next();
         else if (std::strcmp(argv[i], "--depth")  == 0) cfg.ray_depth  = need_next();
         else if (std::strcmp(argv[i], "--frames") == 0) cfg.num_frames = need_next();

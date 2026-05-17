@@ -54,6 +54,10 @@ extern bool load_ply_file(std::string filename, HittableList& list, std::shared_
         file >> p1;
         file >> p2;
         file >> p3;
+        if (p1 >= vertexes.size() || p2 >= vertexes.size() || p3 >= vertexes.size()) {
+            printf("Error: face index out of bounds (%u, %u, %u) for %zu vertices\n", p1, p2, p3, vertexes.size());
+            return false;
+        }
         list.add(
             std::make_shared<Triangle>(
                 vertexes[p1],
