@@ -69,7 +69,7 @@ static VkShaderModule make_module(VkDevice dev, const std::vector<uint32_t>& spv
     return mod;
 }
 
-Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
+Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkDescriptorSetLayout camera_layout) {
     device = ctx.device.device;
 
     auto shader_dir = find_shader_dir();
@@ -150,15 +150,10 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
     depth_stencil.depthWriteEnable = VK_TRUE;
     depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
 
-    VkPushConstantRange pc_range{};
-    pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pc_range.offset     = 0;
-    pc_range.size       = sizeof(float) * 16; // mat4
-
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges    = &pc_range;
+    layout_info.setLayoutCount         = 1;
+    layout_info.pSetLayouts            = &camera_layout;
     if (vkCreatePipelineLayout(device, &layout_info, nullptr, &layout) != VK_SUCCESS)
         throw std::runtime_error("Pipeline layout creation failed");
 
