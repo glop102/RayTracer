@@ -160,24 +160,24 @@ std::vector<std::shared_ptr<Triangle>> make_box(const BBox& box, std::shared_ptr
     Point3 p011{lo.x, hi.y, hi.z};
     Point3 p111{hi.x, hi.y, hi.z};
     return {
-        // -X face (normal pointing -x), CCW from outside
-        std::make_shared<Triangle>(p000, p010, p011, material),
-        std::make_shared<Triangle>(p011, p001, p000, material),
-        // +X face (normal pointing +x)
-        std::make_shared<Triangle>(p100, p101, p111, material),
-        std::make_shared<Triangle>(p111, p110, p100, material),
-        // -Y face (normal pointing -y)
-        std::make_shared<Triangle>(p000, p001, p101, material),
-        std::make_shared<Triangle>(p101, p100, p000, material),
-        // +Y face (normal pointing +y)
-        std::make_shared<Triangle>(p010, p110, p111, material),
-        std::make_shared<Triangle>(p111, p011, p010, material),
-        // -Z face (normal pointing -z)
-        std::make_shared<Triangle>(p000, p100, p110, material),
-        std::make_shared<Triangle>(p110, p010, p000, material),
-        // +Z face (normal pointing +z)
-        std::make_shared<Triangle>(p001, p011, p111, material),
-        std::make_shared<Triangle>(p111, p101, p001, material),
+        // -X face: outward normal = -X,  e1=(0,0,dz) e2=(0,dy,dz) → n=-X
+        std::make_shared<Triangle>(p000, p001, p011, material),
+        std::make_shared<Triangle>(p011, p010, p000, material),
+        // +X face: outward normal = +X,  e1=(0,dy,0) e2=(0,dy,dz) → n=+X
+        std::make_shared<Triangle>(p100, p110, p111, material),
+        std::make_shared<Triangle>(p111, p101, p100, material),
+        // -Y face: outward normal = -Y,  e1=(dx,0,0) e2=(dx,0,dz) → n=-Y
+        std::make_shared<Triangle>(p000, p100, p101, material),
+        std::make_shared<Triangle>(p101, p001, p000, material),
+        // +Y face: outward normal = +Y,  e1=(0,0,dz) e2=(dx,0,dz) → n=+Y
+        std::make_shared<Triangle>(p010, p011, p111, material),
+        std::make_shared<Triangle>(p111, p110, p010, material),
+        // -Z face: outward normal = -Z,  e1=(0,dy,0) e2=(dx,dy,0) → n=-Z
+        std::make_shared<Triangle>(p000, p010, p110, material),
+        std::make_shared<Triangle>(p110, p100, p000, material),
+        // +Z face: outward normal = +Z,  e1=(dx,0,0) e2=(dx,dy,0) → n=+Z
+        std::make_shared<Triangle>(p001, p101, p111, material),
+        std::make_shared<Triangle>(p111, p011, p001, material),
     };
 }
 
