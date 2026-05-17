@@ -8,13 +8,12 @@ BRDMaterial::BRDMaterial(const Color& diffuse, const Color& specular, const Colo
 {}
 
 void BRDMaterial::scatter(const Ray& incident, const HitRecord& rec, Color& attenuation, Ray& outgoing_bounce)const{
-    Vector3 diffuse_cast = rec.normal + Vector3::random_unit_vector(); // lambertian diffusion
+    Vector3 diffuse_cast = rec.normal + Vector3::random_unit_vector();
     Vector3 specular_cast = Vector3::reflect_around_normal(rec.normal,incident.direction);
+    Vector3 direction = Vector3::lerp(specular_cast,diffuse_cast,roughness).normalize();
 
-    outgoing_bounce.direction = Vector3::lerp(specular_cast,diffuse_cast,roughness).normalize();
-    outgoing_bounce.origin = rec.intersection_point;
-
-    attenuation = Vector3::lerp(specular,diffuse, outgoing_bounce.direction.dot(rec.normal) );
+    outgoing_bounce = Ray(rec.intersection_point, direction);
+    attenuation = Vector3::lerp(specular,diffuse, direction.dot(rec.normal));
 }
 
 Color BRDMaterial::extra_light(const Ray& incident, const HitRecord& rec, const Color& current_color)const{
@@ -85,12 +84,13 @@ void PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec,
     double sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
 
     bool can_refract = (ri_ratio * sin_theta) <= 1.0;
+    Vector3 direction;
     if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution()) {
-        outgoing_bounce.direction = rec.normal.reflect(incident.direction);
+        direction = rec.normal.reflect(incident.direction);
     } else {
-        outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
+        direction = rec.normal.refract(incident.direction,ri_ratio);
     }
-    outgoing_bounce.origin = rec.intersection_point;
+    outgoing_bounce = Ray(rec.intersection_point, direction);
 }
 double PureTransparentMaterial::reflectance(double cosine, double refraction_index) {
     // Use Schlick's approximation for reflectance.

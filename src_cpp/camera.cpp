@@ -133,7 +133,6 @@ Color Camera::_cast_ray_for_color(Ray& ray, const Hittable& scene){
             accumulated_energy += total_attenuation * rec.material->extra_light(ray,rec,total_attenuation);
             total_attenuation = total_attenuation * additional_attenuation;
             ray = next_bounce;
-            ray.recompute_inv_direction();
         } else {
             accumulated_energy += total_attenuation * skybox->color(ray);
             break;
