@@ -25,7 +25,8 @@ class Hittable{
 
 class Triangle:public Hittable{
     public:
-    Point3 p1,p2,p3;
+    Point3 p1;
+    Vector3 e1, e2; // precomputed: e1 = p2-p1, e2 = p3-p1
     Vector3 normal;
     std::shared_ptr<Material> material;
     Triangle(const Point3& p1, const Point3& p2, const Point3& p3);

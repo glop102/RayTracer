@@ -6,17 +6,18 @@ using std::sqrt;
 // Triangle
 //===================================================================
 Triangle::Triangle(const Point3& p1, const Point3& p2, const Point3& p3):
-    p1(p1), p2(p2), p3(p3), material(AluminiumDull)
+    p1(p1), e1(p2-p1), e2(p3-p1), material(AluminiumDull)
 {
-    normal = (p2-p1).cross(p3-p1).normalize();
+    normal = e1.cross(e2).normalize();
 }
 Triangle::Triangle(const Point3& p1, const Point3& p2, const Point3& p3, std::shared_ptr<Material> mat):
-    p1(p1), p2(p2), p3(p3), material(mat)
+    p1(p1), e1(p2-p1), e2(p3-p1), material(mat)
 {
-    normal = (p2-p1).cross(p3-p1).normalize();
+    normal = e1.cross(e2).normalize();
 }
 
 BBox Triangle::bbox()const{
+    Point3 p2 = p1+e1, p3 = p1+e2;
     return {
         {
             std::min(std::min(p1.x,p2.x),p3.x),
@@ -32,59 +33,40 @@ BBox Triangle::bbox()const{
 }
 
 bool Triangle::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec)const{
-    // https://courses.cs.washington.edu/courses/csep557/10au/lectures/triangle_intersection.pdf
-    // The intersection test occurs in two stages
-    // 1) Find the point of the ray cast on the plane of the triangle
-    // 2) Determine if that point is inside the triangle
+    // Möller-Trumbore algorithm
+    // Solves origin + t*dir = p1 + u*e1 + v*e2 simultaneously for t, u, v.
+    // u and v are barycentric coordinates: the point is inside the triangle if
+    // u >= 0, v >= 0, and u+v <= 1.
 
-    auto normal_direction_dot = this->normal.dot(ray.direction);
-    if (normal_direction_dot <= std::numeric_limits<double>::epsilon()*15.0 && normal_direction_dot >= std::numeric_limits<double>::epsilon()*-15.0) {
-        // The direction is effectivly parrellel with our triangle so consider it a miss
-        return false;
-    }
+    Vector3 h = ray.direction.cross(e2);
+    double a = e1.dot(h);
+    // a is zero when the ray is parallel to the triangle plane
+    if (a > -1e-8 && a < 1e-8) return false;
 
-    // There is a random coefficient d that shows up in the math, but it just is the dot product
-    // of the normal with some point in the triangle's plane and so we can take the first point
-    // of our triangle as that point in the plane.
-    auto d = this->normal.dot(this->p1);
+    double f = 1.0 / a;
+    Vector3 s = ray.origin - p1;
+    double u = f * s.dot(h);
+    if (u < 0.0 || u > 1.0) return false;  // outside triangle, early exit
 
-    // The distance the ray travels to rach our plane is d- n.dot(ray.origin) / n.dot(ray.direction)
-    // We calculated most of it above so lets finish it out
-    auto ray_intersection_distance = ( d - this->normal.dot(ray.origin) ) / normal_direction_dot;
-    if(!allowed_distance.surrounds(ray_intersection_distance)) {
-        return false;
-    }
-    auto ray_intersection_point = ray.at(ray_intersection_distance);
+    Vector3 q = s.cross(e1);
+    double v = f * ray.direction.dot(q);
+    if (v < 0.0 || u + v > 1.0) return false;  // outside triangle, early exit
 
-    // We know where the ray intersects the *plane* of the triangle but we do not know if that
-    // intersection point is inside the triangle. Lets check that now.
-    // Simply check if the normal with the point on the plane is the same direction for all 3 sides
-    bool outside_side_a = (p2-p1).cross(ray_intersection_point-p1).dot(normal) < 0;
-    bool outside_side_b = (p3-p2).cross(ray_intersection_point-p2).dot(normal) < 0;
-    bool outside_side_c = (p1-p3).cross(ray_intersection_point-p3).dot(normal) < 0;
-    if (outside_side_a || outside_side_b || outside_side_c) return false;
+    double t = f * e2.dot(q);
+    if (!allowed_distance.surrounds(t)) return false;
 
-    // todo - barycentric coords to do texture mapping with
-    // todo - per-vertex normals that get interpolated with the barycentric coords
-
-    // We have passed all the tests for if the point is inside the triangle, so lets do some bookkeeping
-    // Shrink the far plane for finding more hits that are only closer
-    allowed_distance.max = ray_intersection_distance;
-    // Add the hit information to the hit record
-    rec.intersection_point = ray_intersection_point;
-    rec.distanceScale = ray_intersection_distance;
-    rec.material = this->material;
-    // We want to know if we hit the front or back face of the triangle, which is just comparing if the
-    // direction the ray is traveling is the same or opposite direction of the normal
-    if (normal_direction_dot < 0.0) {
-        rec.normal = this->normal;
+    allowed_distance.max = t;
+    rec.distanceScale = t;
+    rec.intersection_point = ray.at(t);
+    rec.material = material;
+    // a > 0 means ray hits the front face (opposite sign to normal.dot(ray.direction))
+    if (a > 0.0) {
+        rec.normal = normal;
         rec.front_face = true;
     } else {
-        rec.normal = this->normal.reverse();
+        rec.normal = normal.reverse();
         rec.front_face = false;
-        // rec.material = ErrorMaterialRed;
     }
-
     return true;
 }
 
