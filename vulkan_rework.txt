@@ -1,0 +1,155 @@
+Vulkan Ray Tracing Rework Plan
+==============================
+
+The current CPU architecture maps almost directly onto Vulkan's ray tracing model.
+The goal is to eventually replace the CPU path tracer with a Vulkan RT pipeline,
+but Vulkan has enough boilerplate that it's worth building up in stages rather
+than attempting a full translation in one shot.
+
+
+STAGE 1: Basic Vulkan Rasterization Pipeline
+---------------------------------------------
+Get comfortable with Vulkan before touching RT extensions. A rasterization
+pipeline covers all the infrastructure that RT will also need.
+
+Libraries (use all four from day one):
+  - vk-bootstrap  : instance/physical device/logical device/swapchain in ~50
+                    lines instead of ~400; do not hand-roll these
+  - VMA           : replaces vkAllocateMemory + vkBindBufferMemory with one
+                    call; RT requires heavy buffer allocation so this pays off
+                    immediately in Stage 2
+  - GLFW          : window + VkSurfaceKHR creation
+  - GLM           : vec3/mat4 math that matches GLSL layout rules; important
+                    for correct UBO alignment
+
+Milestones:
+  1. Instance + device + swapchain + render pass
+       Use vk-bootstrap for all of this.
+       Enable VK_LAYER_KHRONOS_validation here — do not defer. Shader
+       debugging without validation layers is extremely painful.
+       While creating the logical device, request the RT extension feature
+       structs now even though they are not used yet:
+           VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures{};
+           VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{};
+       Chain them into VkDeviceCreateInfo::pNext. This confirms the GPU
+       supports RT early and means Stage 2 does not require touching device
+       creation again.
+
+  2. Draw a triangle (vertex buffer, pipeline, shaders)
+       Hard-code positions in the vertex shader first, confirm the present
+       loop works, then move positions into a VBO. This validates the pipeline
+       state object and render pass before any mesh data is involved.
+
+  3. Load and draw the bunny mesh (index buffer, depth buffer)
+       Feed the existing PLY loader into a VkBuffer (vertex) + VkBuffer
+       (index) pair allocated via VMA. Add a depth attachment to the render
+       pass. Tests that the CPU-side mesh data can reach the GPU cleanly.
+
+  4. Orbit camera with a UBO (uniform buffer object)
+       Single VkBuffer allocated with VMA_MEMORY_USAGE_CPU_TO_GPU and kept
+       persistently mapped. Write view/proj matrix each frame. One descriptor
+       set, one binding — do not add complexity beyond this yet.
+
+This is ~1500 lines of setup but you only write it once. Every subsequent stage
+reuses the same device/swapchain/command buffer scaffolding.
+
+Things to skip for now (add only when a later stage demands them):
+  - Multiple render passes or subpasses
+  - Framebuffer resize handling
+  - Descriptor sets beyond the single camera UBO
+  - Push constants, specialization constants, pipeline cache
+
+Skip validation layers in a hurry, but you will regret it. Enable them from day one.
+
+
+STAGE 2: Add RT Extensions (KHR_ray_tracing_pipeline)
+------------------------------------------------------
+Requires: VK_KHR_ray_tracing_pipeline + VK_KHR_acceleration_structure.
+Check device support first — any RTX 2000+ or RX 6000+ card has it.
+
+New concepts vs rasterization:
+  - BLAS (Bottom-Level Acceleration Structure): one per mesh
+    Upload triangle positions as a VkBuffer, call vkCmdBuildAccelerationStructuresKHR.
+    Driver builds the BVH internally — no SAH code needed.
+  - TLAS (Top-Level Acceleration Structure): one per scene
+    Array of VkAccelerationStructureInstanceKHR, each with a 4x3 row-major
+    transform and a BLAS reference. This is exactly the Instance model.
+  - Shader Binding Table (SBT): maps geometry to shader groups.
+    One entry per material type (BRD, glass, emissive, ...).
+
+Milestone: shoot a ray from a hard-coded camera, return the barycentric
+coordinates of the first hit as a color. No shading, no BVH code, just
+confirm the pipeline is wired up.
+
+
+STAGE 3: Translate the Path Tracer
+-----------------------------------
+Once the RT pipeline is confirmed working, translate the CPU logic to shaders.
+
+Shader stage mapping:
+  CPU                             GPU (GLSL)
+  --------------------------------+------------------------------------------
+  Camera::_cast_ray_for_color()  | raygen shader (ray generation)
+  BRDMaterial::scatter()         | closest-hit shader (one per material type)
+  PureTransparentMaterial        | closest-hit shader (separate shader group)
+  Skybox::color()                | miss shader
+  Triangle intersection          | built-in (no intersection shader needed)
+  TriangleBVH8                   | BLAS (driver-managed)
+  BVH8List / Instance            | TLAS + instance transforms
+
+Things that need restructuring:
+  - Bounce loop: _cast_ray_for_color uses a while loop. GPU options:
+      a) traceRayEXT() recursion in the raygen shader (simple, depth-limited,
+         loses GPU coherence quickly past ~4 bounces)
+      b) Wavefront: raygen fills a ray buffer, closest-hit writes bounce rays
+         to another buffer, dispatch again. Better throughput for deep paths.
+    Start with (a) since it's a direct translation. Move to (b) if needed.
+  - Virtual dispatch: replace with a materialID stored per-triangle in the BLAS
+    geometry data. Closest-hit shaders are selected via the SBT, not vtable.
+  - RNG: each pixel needs its own state. Store a PCG32 seed in a storage image
+    or push constant seeded by (pixel_x * width + pixel_y + frame * prime).
+  - Accumulation: render to a float RGBA storage image, average with prior
+    frames using a running mean (current * (n-1)/n + new/n) or keep a
+    separate sample count buffer.
+
+Material data layout:
+  Define a GPU-side struct matching BRDMaterial fields (diffuse, specular,
+  emissive, roughness). Pack into a SSBO (shader storage buffer) indexed by
+  materialID. PureTransparentMaterial gets its own SSBO with refractive_index.
+
+
+ARCHITECTURE THAT CARRIES OVER UNCHANGED
+-----------------------------------------
+  - SAH BVH construction: irrelevant — driver builds it from triangle data.
+  - SoALeaf / moller_trumbore_8 / aabb_test_8: irrelevant — RT cores do this.
+  - The overall path tracing algorithm: direct translation.
+  - BBox, camera math, skybox colors: rewrite in GLSL/GLM but logic identical.
+  - PLY loader: still runs on CPU, uploads vertex/index buffers to GPU.
+
+The Instance transform is the cleanest win: what took manual rot/rot_inv matrix
+math in C++ becomes a single field in VkAccelerationStructureInstanceKHR.
+
+
+ROUGH EFFORT ESTIMATE
+---------------------
+  Stage 1 (rasterization foundation)  : 1-2 weeks
+  Stage 2 (RT pipeline + first ray)   : 3-5 days
+  Stage 3 (full path tracer)          : 1-2 weeks
+
+Total: 3-5 weeks for a faithful translation. The algorithmic work is
+small — most time goes to Vulkan API plumbing and shader debugging.
+
+Expected performance vs current CPU implementation (4:25 / frame at 4K, 1000spp):
+  A mid-range RT-capable GPU (RTX 3070 class) would likely do the same frame
+  in 10-30 seconds. High-end (RTX 4080+): potentially under 10 seconds.
+  Wavefront path tracing and denoising (DLSS or OIDN) could push interactive
+  framerates for lower spp counts.
+
+
+REFERENCES
+----------
+  Vulkan Tutorial (rasterization foundation): https://vulkan-tutorial.com
+  Vulkan Ray Tracing Tutorial (NV/KHR):      https://nvpro-samples.github.io/vk_raytracing_tutorial_KHR/
+  vk-bootstrap:                               https://github.com/charles-lunarg/vk-bootstrap
+  VMA:                                        https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+  Ray Tracing Gems (free PDF):               https://www.realtimerendering.com/raytracinggems/
