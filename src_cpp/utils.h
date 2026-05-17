@@ -4,27 +4,24 @@
 #include <iostream>
 #include <memory>
 #include <cmath>
-#include <random>
 #include <chrono>
+#include <random>
 
 const double Infinity = std::numeric_limits<double>::infinity();
 const double PI = 3.1415926535897932385;
 
-#ifdef stl_random
-extern std::random_device random_seed_device; // used for seeding
-extern thread_local std::default_random_engine gen; // common generator to pass into distributions
-// extern thread_local std::mt19937 gen;
-// extern thread_local pcg32 gen;
-extern std::uniform_real_distribution<double> random_percentage_distribution; // range from 0 - 1
-extern std::uniform_real_distribution<double> random_neg_pos_one; // range from -1 - 1
-#else
-extern std::random_device random_seed_device; // used for seeding
-extern double pcg();
-extern double (*gen)();
-extern double random_percentage_distribution(double(*seeder)()); // range from 0 - 1
-extern double random_neg_pos_one(double(*seeder)()); // range from -1 - 1
-extern double random_range(double(*seeder)(),const double min,const double max);
-#endif
+extern std::random_device random_seed_device;
+
+inline double rng() {
+    thread_local unsigned int seed = random_seed_device();
+    unsigned int state = seed * 747796405u + 2891336453u;
+    unsigned int word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    seed = (word >> 22u) ^ word;
+    return seed / (double)std::numeric_limits<unsigned int>::max();
+}
+inline double random_percentage_distribution() { return rng(); }
+inline double random_neg_pos_one()              { return rng() * 2.0 - 1.0; }
+inline double random_range(double min, double max) { return rng() * (max - min) + min; }
 
 template<typename... Args>
 void print(const char* fmnt, Args... args){

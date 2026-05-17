@@ -50,9 +50,9 @@ static RenderConfig parse_args(int argc, char** argv) {
 void populate_random_spheres_volume(HittableList& list, int num_spheres, RealRange radius_range, double dx, double dy, double dz, int glass_frequency=12){
     while(num_spheres){
         num_spheres--;
-        double new_r = random_percentage_distribution(gen) * (radius_range.max - radius_range.min) + radius_range.min;
+        double new_r = random_percentage_distribution() * (radius_range.max - radius_range.min) + radius_range.min;
         list.add(std::make_shared<Sphere>(
-            Vector3{dx*random_neg_pos_one(gen),dy*random_neg_pos_one(gen),dz*random_neg_pos_one(gen)},
+            Vector3{dx*random_neg_pos_one(),dy*random_neg_pos_one(),dz*random_neg_pos_one()},
             new_r,
             num_spheres%glass_frequency==0 ? 
                 (std::shared_ptr<Material>) std::make_shared<PureTransparentMaterial>(PureTransparentMaterial(1.5)) :
@@ -63,9 +63,9 @@ void populate_random_spheres_volume(HittableList& list, int num_spheres, RealRan
 void populate_random_spheres_plane_sitting(HittableList& list, int num_spheres, RealRange radius_range, double dx, double dz){
     while(num_spheres){
         num_spheres--;
-        double new_r = random_percentage_distribution(gen) * (radius_range.max - radius_range.min) + radius_range.min;
+        double new_r = random_percentage_distribution() * (radius_range.max - radius_range.min) + radius_range.min;
         list.add(std::make_shared<Sphere>(
-            Vector3{dx*random_neg_pos_one(gen),new_r,dz*random_neg_pos_one(gen)},
+            Vector3{dx*random_neg_pos_one(),new_r,dz*random_neg_pos_one()},
             new_r,
             std::make_shared<BRDMaterial>(BRDMaterial::random())
             ));
@@ -76,7 +76,7 @@ void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, Real
     auto glass = std::make_shared<PureTransparentMaterial>(PureTransparentMaterial(1.5));
     while(num_spheres){
         num_spheres--;
-        double new_r = random_percentage_distribution(gen) * (radius_range.max - radius_range.min) + radius_range.min;
+        double new_r = random_percentage_distribution() * (radius_range.max - radius_range.min) + radius_range.min;
         list.add(std::make_shared<Sphere>(
             Vector3::random_unit_vector() * major_sphere_radius,
             new_r,
@@ -120,7 +120,7 @@ void populate_cornell_box(HittableList& list, const BBox& room) {
 
     // Load bunny in object space (no translation offset — Instance handles placement)
     HittableList bunny;
-    double scale = (hi.y - lo.y) * 0.55;
+    double scale = (hi.y - lo.y) * 2.75;
     load_ply_file("bunny/reconstruction/bun_zipper.ply", bunny, AluminiumDull, scale, {0,0,0});
 
     // Glass prism snugly around the bunny in object space
@@ -135,6 +135,7 @@ void populate_cornell_box(HittableList& list, const BBox& room) {
     // Build a single Instance from the combined bunny + glass geometry,
     // then place it: sitting on the floor, centered in x and z.
     auto inst = std::make_shared<Instance>(bunny.objects);
+    inst->rotate_y(180.0);
     BBox obj_bbox = inst->bbox(); // identity transform, so same as raw bbox
     inst->translate({
         (lo.x+hi.x)/2.0 - obj_bbox.center().x,
@@ -241,9 +242,9 @@ int main(int argc, char** argv){
     Vector3 room_center{0, 5, 5};
     for(int frame=0; frame < cfg.num_frames; frame++){
         double t = frame / (double)cfg.num_frames;
-        // Gentle arc: swing ±40° horizontally in front of the opening
-        double angle = (t - 0.5) * 2.0 * 0.7; // -0.7..+0.7 radians
-        double dist = 18.0;
+        // Wobble back and forth: cos goes 1→-1→1 over the interval
+        double angle = std::sin(t * 2.0 * PI) * 0.7; // ±0.7 radians
+        double dist = 12.0;
         viewport.origin = Vector3{std::sin(angle)*dist, 5, -std::cos(angle)*dist + room_center.z};
         viewport.look_at(room_center);
         timer.reset();

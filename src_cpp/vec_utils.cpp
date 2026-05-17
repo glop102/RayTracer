@@ -127,17 +127,17 @@ Vector3 Vector3::reverse()const{
 
 Vector3 Vector3::random(){
     return {
-        random_percentage_distribution(gen),
-        random_percentage_distribution(gen),
-        random_percentage_distribution(gen)
+        random_percentage_distribution(),
+        random_percentage_distribution(),
+        random_percentage_distribution()
     };
 }
 Vector3 Vector3::random(double min, double max){
     double range = max-min;
     return {
-        random_percentage_distribution(gen)*range + min,
-        random_percentage_distribution(gen)*range + min,
-        random_percentage_distribution(gen)*range + min
+        random_percentage_distribution()*range + min,
+        random_percentage_distribution()*range + min,
+        random_percentage_distribution()*range + min
     };
 }
 Vector3 Vector3::random_unit_vector(){
@@ -158,8 +158,8 @@ Vector3 Vector3::random_unit_vector(){
     // z = z*cosy - x*siny = x*siny => -sinx*siny
     // so just due arbitrary personal preference, I like the second rotation to be around the x axis
 
-    // double rotx = random_percentage_distribution(gen)*2.0*PI;
-    // double roty = random_percentage_distribution(gen)*2.0*PI;
+    // double rotx = random_percentage_distribution()*2.0*PI;
+    // double roty = random_percentage_distribution()*2.0*PI;
     // double siny,sinx,cosy,cosx;
     // sincos(rotx,&sinx,&cosx);
     // sincos(roty,&siny,&cosy);
@@ -181,9 +181,9 @@ Vector3 Vector3::random_unit_vector(){
 
     // Using tan as a correction factor for picking a random point within a box should make it an even distribution
     return Vector3{
-        tan(random_neg_pos_one(gen)),
-        tan(random_neg_pos_one(gen)),
-        tan(random_neg_pos_one(gen))
+        tan(random_neg_pos_one()),
+        tan(random_neg_pos_one()),
+        tan(random_neg_pos_one())
     }.normalize();
 }
 

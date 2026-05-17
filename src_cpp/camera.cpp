@@ -99,7 +99,7 @@ void Camera::render(const Hittable& scene){
 
                 accum = Black;
                 for(int sample=0; sample<sampling_per_pixel; sample++){
-                    Ray ray = _initial_pixel_ray(our_claimed_x,our_claimed_y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one(gen)/2.0, random_neg_pos_one(gen)/2.0);
+                    Ray ray = _initial_pixel_ray(our_claimed_x,our_claimed_y,screen_origin,pixel_delta_x,pixel_delta_y, random_neg_pos_one()/2.0, random_neg_pos_one()/2.0);
                     accum += _cast_ray_for_color(ray,scene);
                 }
                 pixels->get_px(our_claimed_x,our_claimed_y) = accum / sampling_per_pixel;

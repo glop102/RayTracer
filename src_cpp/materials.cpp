@@ -28,18 +28,18 @@ Color BRDMaterial::extra_light(const Ray& incident, const HitRecord& rec, const 
 
 BRDMaterial BRDMaterial::random(){
     // return {
-    //     .diffuse{random_percentage_distribution(gen),random_percentage_distribution(gen),random_percentage_distribution(gen)},
-    //     .specular{random_percentage_distribution(gen),random_percentage_distribution(gen),random_percentage_distribution(gen)},
-    //     .emissive{random_percentage_distribution(gen),random_percentage_distribution(gen),random_percentage_distribution(gen)},
-    //     .specular_tightness{random_percentage_distribution(gen)},
-    //     .roughness{random_percentage_distribution(gen)}
+    //     .diffuse{random_percentage_distribution(),random_percentage_distribution(),random_percentage_distribution()},
+    //     .specular{random_percentage_distribution(),random_percentage_distribution(),random_percentage_distribution()},
+    //     .emissive{random_percentage_distribution(),random_percentage_distribution(),random_percentage_distribution()},
+    //     .specular_tightness{random_percentage_distribution()},
+    //     .roughness{random_percentage_distribution()}
     // };
     return BRDMaterial(
-        {random_percentage_distribution(gen),random_percentage_distribution(gen),random_percentage_distribution(gen)},
-        {random_percentage_distribution(gen),random_percentage_distribution(gen),random_percentage_distribution(gen)},
+        {random_percentage_distribution(),random_percentage_distribution(),random_percentage_distribution()},
+        {random_percentage_distribution(),random_percentage_distribution(),random_percentage_distribution()},
         {0,0,0},
-        random_percentage_distribution(gen),
-        random_percentage_distribution(gen)
+        random_percentage_distribution(),
+        random_percentage_distribution()
     );
 }
 
@@ -90,7 +90,7 @@ void PureTransparentMaterial::scatter(const Ray& incident, const HitRecord& rec,
     double sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
 
     bool can_refract = (ri_ratio * sin_theta) <= 1.0;
-    if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution(gen)) {
+    if(!can_refract || reflectance(cos_theta, ri_ratio) > random_percentage_distribution()) {
         outgoing_bounce.direction = rec.normal.reflect(incident.direction);
     } else {
         outgoing_bounce.direction = rec.normal.refract(incident.direction,ri_ratio);
