@@ -2,8 +2,11 @@
 #include "vk_context.h"
 #include "mesh.h"
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // AccelStructure lifecycle
@@ -157,22 +160,27 @@ AccelStructure build_blas(VkContext& ctx, Mesh& mesh) {
 // ---------------------------------------------------------------------------
 // TLAS build
 
-AccelStructure build_tlas(VkContext& ctx, AccelStructure& blas) {
-    // Single instance with identity transform pointing at the BLAS.
-    VkAccelerationStructureInstanceKHR inst{};
-    // Row-major 3×4 identity:
-    inst.transform.matrix[0][0] = 1.0f;
-    inst.transform.matrix[1][1] = 1.0f;
-    inst.transform.matrix[2][2] = 1.0f;
-    inst.instanceCustomIndex                    = 0;
-    inst.mask                                   = 0xFF;
-    inst.instanceShaderBindingTableRecordOffset = 0;
-    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    inst.accelerationStructureReference         = blas.address;
+AccelStructure build_tlas(VkContext& ctx, const std::vector<TlasInstance>& instances) {
+    // Build the flat VkAccelerationStructureInstanceKHR array.
+    // GLM is column-major; VkTransformMatrixKHR is row-major 3x4.
+    // Transposing the GLM mat4 and copying the first 3 rows (12 floats) produces
+    // the correct row-major layout expected by Vulkan.
+    std::vector<VkAccelerationStructureInstanceKHR> vk_insts(instances.size());
+    for (size_t i = 0; i < instances.size(); i++) {
+        const TlasInstance& src = instances[i];
+        VkAccelerationStructureInstanceKHR& dst = vk_insts[i];
+        glm::mat4 T = glm::transpose(src.transform);
+        std::memcpy(dst.transform.matrix, glm::value_ptr(T), sizeof(dst.transform.matrix));
+        dst.instanceCustomIndex                    = src.custom_index & 0xFFFFFFu;
+        dst.mask                                   = 0xFF;
+        dst.instanceShaderBindingTableRecordOffset = 0;
+        dst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        dst.accelerationStructureReference         = src.blas->address;
+    }
 
-    // Upload instance data via a staging buffer (TLAS build reads from device).
-    VkDeviceSize inst_size = sizeof(VkAccelerationStructureInstanceKHR);
+    VkDeviceSize inst_size = vk_insts.size() * sizeof(VkAccelerationStructureInstanceKHR);
 
+    // Upload via staging buffer — TLAS build reads from device-local memory.
     VkBufferCreateInfo stg_ci{};
     stg_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     stg_ci.size  = inst_size;
@@ -187,7 +195,7 @@ AccelStructure build_tlas(VkContext& ctx, AccelStructure& blas) {
         throw std::runtime_error("Instance staging buffer creation failed");
     void* stg_mapped;
     vmaMapMemory(ctx.allocator, stg_alloc, &stg_mapped);
-    std::memcpy(stg_mapped, &inst, inst_size);
+    std::memcpy(stg_mapped, vk_insts.data(), inst_size);
     vmaUnmapMemory(ctx.allocator, stg_alloc);
 
     VmaAllocation inst_alloc{};
@@ -201,7 +209,6 @@ AccelStructure build_tlas(VkContext& ctx, AccelStructure& blas) {
     VkBufferCopy region{0, 0, inst_size};
     vkCmdCopyBuffer(cmd, stg_buf, inst_buf, 1, &region);
 
-    // Memory barrier: ensure copy is visible to the AS build.
     VkMemoryBarrier barrier{};
     barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -216,12 +223,12 @@ AccelStructure build_tlas(VkContext& ctx, AccelStructure& blas) {
     inst_data.data.deviceAddress = buffer_address(ctx.device.device, inst_buf);
 
     VkAccelerationStructureGeometryKHR geom{};
-    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    geom.geometry.instances = inst_data;
+    geom.sType               = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType        = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.flags               = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.instances  = inst_data;
 
-    uint32_t inst_count = 1;
+    uint32_t inst_count = static_cast<uint32_t>(instances.size());
 
     VkAccelerationStructureBuildGeometryInfoKHR build_info{};
     build_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;

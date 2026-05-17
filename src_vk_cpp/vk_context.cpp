@@ -47,6 +47,12 @@ VkContext::VkContext(GLFWwindow* window) {
     vk12_features.bufferDeviceAddress = VK_TRUE;
     vk12_features.descriptorIndexing  = VK_TRUE;
 
+    // shaderInt64 is a 1.0 core feature; route it through VkPhysicalDeviceFeatures2
+    // in the pNext chain (incompatible with pEnabledFeatures, which we leave NULL).
+    VkPhysicalDeviceFeatures2 base_features{};
+    base_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    base_features.features.shaderInt64 = VK_TRUE;
+
     // ------------------------------------------------------------------ Physical device
     auto phys_ret = vkb::PhysicalDeviceSelector{instance}
         .set_surface(surface)
@@ -64,6 +70,7 @@ VkContext::VkContext(GLFWwindow* window) {
         .add_pNext(&rt_pipeline_features)
         .add_pNext(&as_features)
         .add_pNext(&vk12_features)
+        .add_pNext(&base_features)
         .build();
     if (!dev_ret)
         throw std::runtime_error("Logical device creation failed: " + dev_ret.error().message());

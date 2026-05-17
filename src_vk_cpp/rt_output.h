@@ -3,10 +3,15 @@
 #include <vulkan/vulkan.h>
 
 struct VkContext;
+struct SceneData;
 
-// Owns the storage image that the raygen shader writes to, plus the descriptor
-// pool and set that binds the TLAS (binding 0) and image (binding 1).
-// Must be recreated on swapchain resize (image dimensions must match).
+// Owns the RGBA32F storage image for path-trace accumulation, plus the
+// descriptor pool and set that binds:
+//   binding 0: TLAS
+//   binding 1: storage image (RGBA32F, read-modify-write for running mean)
+//   binding 2: vertex SSBO  (for face normal lookup in closest-hit)
+//   binding 3: index  SSBO
+// Must be recreated on swapchain resize; vertex/index buffers are stable.
 struct RtOutput {
     VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool      descriptor_pool       = VK_NULL_HANDLE;
@@ -16,7 +21,8 @@ struct RtOutput {
     VmaAllocation alloc = {};
     VkImageView   view  = VK_NULL_HANDLE;
 
-    RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas);
+    RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
+             const SceneData& scene);
     ~RtOutput();
 
     // Recreate the storage image for a new extent and rebind all descriptors.
@@ -28,6 +34,13 @@ struct RtOutput {
 private:
     VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
+
+    VkBuffer     mesh_refs_buf   = VK_NULL_HANDLE;
+    VkDeviceSize mesh_refs_range = 0;
+    VkBuffer     materials_buf   = VK_NULL_HANDLE;
+    VkDeviceSize materials_range = 0;
+    VkBuffer     instances_buf   = VK_NULL_HANDLE;
+    VkDeviceSize instances_range = 0;
 
     void create_image(VkContext& ctx, VkExtent2D extent);
     void destroy_image();

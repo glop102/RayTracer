@@ -130,8 +130,11 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
     VmaAllocationInfo sbt_alloc_info{};
-    if (vmaCreateBuffer(ctx.allocator, &sbt_ci, &sbt_ai,
-                        &sbt_buf, &sbt_alloc, &sbt_alloc_info) != VK_SUCCESS)
+    // SBT base address must be aligned to shaderGroupBaseAlignment — use the
+    // explicit-alignment variant so VMA satisfies this regardless of suballoc placement.
+    if (vmaCreateBufferWithAlignment(ctx.allocator, &sbt_ci, &sbt_ai,
+                                     base_align,
+                                     &sbt_buf, &sbt_alloc, &sbt_alloc_info) != VK_SUCCESS)
         throw std::runtime_error("SBT buffer creation failed");
 
     auto* data = static_cast<uint8_t*>(sbt_alloc_info.pMappedData);

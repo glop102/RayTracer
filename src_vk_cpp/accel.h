@@ -2,6 +2,11 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+
+#include <vector>
+
 struct VkContext;
 struct Mesh;
 
@@ -29,9 +34,14 @@ struct AccelStructure {
 };
 
 // Build a BLAS for a single triangle mesh.
-// The mesh buffers must have ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY and
-// SHADER_DEVICE_ADDRESS usage flags (set by Mesh constructor).
 AccelStructure build_blas(VkContext& ctx, Mesh& mesh);
 
-// Build a TLAS with a single identity-transform instance pointing at blas.
-AccelStructure build_tlas(VkContext& ctx, AccelStructure& blas);
+// One entry in the TLAS instance list.
+struct TlasInstance {
+    AccelStructure* blas;
+    glm::mat4       transform;    // object-to-world (column-major GLM convention)
+    uint32_t        custom_index; // gl_InstanceCustomIndexEXT (24-bit)
+};
+
+// Build a TLAS containing the given set of instances.
+AccelStructure build_tlas(VkContext& ctx, const std::vector<TlasInstance>& instances);

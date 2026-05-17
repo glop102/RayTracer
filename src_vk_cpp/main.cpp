@@ -1,4 +1,5 @@
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <stdexcept>
 
 #include "vk_context.h"
@@ -7,6 +8,7 @@
 #include "frame_sync.h"
 #include "mesh.h"
 #include "accel.h"
+#include "scene_data.h"
 #include "rt_output.h"
 #include "rt_pipeline.h"
 
@@ -62,12 +64,41 @@ int main() {
         FrameSync frame_sync{ctx, static_cast<uint32_t>(swapchain.images.size())};
         Mesh      mesh{ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
 
-        // Build acceleration structures — driver manages the BVH internally.
         AccelStructure blas = build_blas(ctx, mesh);
-        AccelStructure tlas = build_tlas(ctx, blas);
 
-        RtOutput   rt_output {ctx, swapchain.extent, tlas.handle};
+        // Three bunnies side by side, each with a different material.
+        auto translate = [](float tx, float ty, float tz) {
+            glm::mat4 m(1.0f);
+            m[3] = glm::vec4(tx, ty, tz, 1.0f);
+            return m;
+        };
+        std::vector<TlasInstance> tlas_instances = {
+            {&blas, translate(-0.35f, 0.0f, 0.0f), 0},
+            {&blas, glm::mat4(1.0f),               1},
+            {&blas, translate( 0.35f, 0.0f, 0.0f), 2},
+        };
+        AccelStructure tlas = build_tlas(ctx, tlas_instances);
+
+        std::vector<GpuMeshRef> mesh_refs = {
+            {mesh.vertex_addr, mesh.index_addr},
+        };
+        std::vector<GpuMaterial> materials = {
+            // diffuse              roughness  specular             _pad0  emissive      _pad1
+            {{0.75f, 0.75f, 0.75f}, 0.15f, {0.9f,  0.9f,  0.9f},  0.0f, {0,0,0}, 0.0f}, // AluminiumDull
+            {{0.80f, 0.15f, 0.10f}, 0.92f, {0.5f,  0.5f,  0.5f},  0.0f, {0,0,0}, 0.0f}, // MatteRed
+            {{0.80f, 0.60f, 0.20f}, 0.02f, {1.0f,  0.9f,  0.5f},  0.0f, {0,0,0}, 0.0f}, // GoldMirror
+        };
+        std::vector<GpuInstanceData> instance_data = {
+            {0, 0, {0, 0}},  // left   — AluminiumDull
+            {0, 1, {0, 0}},  // centre — MatteRed
+            {0, 2, {0, 0}},  // right  — GoldMirror
+        };
+        SceneData scene_data{ctx, mesh_refs, materials, instance_data};
+
+        RtOutput   rt_output  {ctx, swapchain.extent, tlas.handle, scene_data};
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
+
+        uint32_t frame_index = 0;
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -81,6 +112,7 @@ int main() {
                 vkDeviceWaitIdle(ctx.device.device);
                 swapchain.recreate(ctx, static_cast<uint32_t>(fw), static_cast<uint32_t>(fh));
                 rt_output.recreate(ctx, swapchain.extent, tlas.handle);
+                frame_index = 0;
                 continue;
             }
 
@@ -93,8 +125,11 @@ int main() {
                 throw std::runtime_error("Failed to begin command buffer");
 
             // Bind RT pipeline and push camera parameters.
+            if (camera.consume_moved()) frame_index = 0;
+
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline.pipeline);
             RtCameraPush push = camera.rt_push(swapchain.extent);
+            push.frame_index  = frame_index++;
             vkCmdPushConstants(cmd, rt_pipeline.layout,
                                VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(push), &push);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,

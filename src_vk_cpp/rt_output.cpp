@@ -1,48 +1,76 @@
 #include "rt_output.h"
+#include "scene_data.h"
 #include "vk_context.h"
 
 #include <stdexcept>
 
-// Storage image format — RGBA8 is sufficient for the barycentric milestone.
-// Switch to R32G32B32A32_SFLOAT for HDR accumulation in Stage 3.
-static constexpr VkFormat STORAGE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
+// RGBA32F for HDR path-trace accumulation (running mean, linear space).
+// The blit to the SRGB swapchain applies the sRGB transfer function.
+static constexpr VkFormat STORAGE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
 
-RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas) {
-    device    = ctx.device.device;
-    allocator = ctx.allocator;
+RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
+                   const SceneData& scene) {
+    device         = ctx.device.device;
+    allocator      = ctx.allocator;
+    mesh_refs_buf  = scene.mesh_refs_buf;
+    mesh_refs_range= scene.mesh_refs_range;
+    materials_buf  = scene.materials_buf;
+    materials_range= scene.materials_range;
+    instances_buf  = scene.instances_buf;
+    instances_range= scene.instances_range;
 
     // ------------------------------------------------------------------ Descriptor set layout
-    // binding 0: acceleration structure (TLAS) — raygen only
-    // binding 1: storage image             — raygen only
-    VkDescriptorSetLayoutBinding bindings[2]{};
-    bindings[0].binding        = 0;
+    // binding 0: TLAS           — raygen
+    // binding 1: storage image  — raygen (RGBA32F running-mean accumulation)
+    // binding 2: mesh_refs SSBO — closest-hit
+    // binding 3: materials SSBO — closest-hit
+    // binding 4: instances SSBO — closest-hit
+    VkDescriptorSetLayoutBinding bindings[5]{};
+    bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    bindings[1].binding        = 1;
+    bindings[1].binding         = 1;
     bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    bindings[3].binding         = 3;
+    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    bindings[4].binding         = 4;
+    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layout_ci{};
     layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_ci.bindingCount = 2;
+    layout_ci.bindingCount = 5;
     layout_ci.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &descriptor_set_layout) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor set layout creation failed");
 
     // ------------------------------------------------------------------ Descriptor pool
-    VkDescriptorPoolSize pool_sizes[2]{};
+    VkDescriptorPoolSize pool_sizes[3]{};
     pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     pool_sizes[0].descriptorCount = 1;
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     pool_sizes[1].descriptorCount = 1;
+    pool_sizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    pool_sizes[2].descriptorCount = 3;  // mesh_refs + materials + instances
 
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_ci.maxSets       = 1;
-    pool_ci.poolSizeCount = 2;
+    pool_ci.poolSizeCount = 3;
     pool_ci.pPoolSizes    = pool_sizes;
     if (vkCreateDescriptorPool(device, &pool_ci, nullptr, &descriptor_pool) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor pool creation failed");
@@ -155,6 +183,36 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     write1.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     write1.pImageInfo      = &img_info;
 
-    VkWriteDescriptorSet writes[2] = {write0, write1};
-    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    // Binding 2: mesh_refs SSBO
+    VkDescriptorBufferInfo mesh_refs_info{mesh_refs_buf, 0, mesh_refs_range};
+    VkWriteDescriptorSet write2{};
+    write2.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write2.dstSet          = descriptor_set;
+    write2.dstBinding      = 2;
+    write2.descriptorCount = 1;
+    write2.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write2.pBufferInfo     = &mesh_refs_info;
+
+    // Binding 3: materials SSBO
+    VkDescriptorBufferInfo materials_info{materials_buf, 0, materials_range};
+    VkWriteDescriptorSet write3{};
+    write3.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write3.dstSet          = descriptor_set;
+    write3.dstBinding      = 3;
+    write3.descriptorCount = 1;
+    write3.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write3.pBufferInfo     = &materials_info;
+
+    // Binding 4: instances SSBO
+    VkDescriptorBufferInfo instances_info{instances_buf, 0, instances_range};
+    VkWriteDescriptorSet write4{};
+    write4.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write4.dstSet          = descriptor_set;
+    write4.dstBinding      = 4;
+    write4.descriptorCount = 1;
+    write4.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write4.pBufferInfo     = &instances_info;
+
+    VkWriteDescriptorSet writes[5] = {write0, write1, write2, write3, write4};
+    vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
 }

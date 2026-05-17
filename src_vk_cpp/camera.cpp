@@ -90,13 +90,21 @@ void Camera::on_cursor_pos(double x, double y) {
         phi    = std::clamp(phi + static_cast<float>(y - last_y) * 0.005f,
                             -std::numbers::pi_v<float> / 2.0f + 0.01f,
                              std::numbers::pi_v<float> / 2.0f - 0.01f);
+        moved = true;
     }
     last_x = x;
     last_y = y;
 }
 
 void Camera::on_scroll(double dy) {
-    radius = std::clamp(radius * (dy > 0 ? 0.92f : 1.08f), 0.05f, 2.0f);
+    radius = std::clamp(radius * (dy > 0 ? 0.92f : 1.08f), 0.05f, 5.0f);
+    moved = true;
+}
+
+bool Camera::consume_moved() {
+    bool m = moved;
+    moved = false;
+    return m;
 }
 
 RtCameraPush Camera::rt_push(VkExtent2D extent) const {
