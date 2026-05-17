@@ -31,7 +31,8 @@ int main() {
             auto [image_index, cmd] = frame_sync.acquire(swapchain.handle);
 
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-            vkBeginCommandBuffer(cmd, &begin);
+            if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
+                throw std::runtime_error("Failed to begin command buffer");
 
             VkClearValue clear_color{{{0.01f, 0.01f, 0.02f, 1.0f}}};
             VkRenderPassBeginInfo rp_begin{};
@@ -56,7 +57,8 @@ int main() {
 
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
-            vkEndCommandBuffer(cmd);
+            if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
+                throw std::runtime_error("Failed to end command buffer");
 
             frame_sync.submit_and_present(ctx.graphics_queue, ctx.present_queue, swapchain.handle);
         }

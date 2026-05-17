@@ -48,18 +48,23 @@ FrameSync::Frame FrameSync::acquire(VkSwapchainKHR swapchain) {
     current_acquire = free_acquire_sems.back();
     free_acquire_sems.pop_back();
 
-    vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
-                          current_acquire, VK_NULL_HANDLE, &current_image);
+    VkResult acquire_result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+                                                     current_acquire, VK_NULL_HANDLE, &current_image);
+    if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
+        throw std::runtime_error("Failed to acquire swapchain image");
 
     if (image_acquire_sem[current_image] != VK_NULL_HANDLE)
         free_acquire_sems.push_back(image_acquire_sem[current_image]);
     image_acquire_sem[current_image] = current_acquire;
 
-    vkWaitForFences(device, 1, &in_flight[current_image], VK_TRUE, UINT64_MAX);
-    vkResetFences  (device, 1, &in_flight[current_image]);
+    if (vkWaitForFences(device, 1, &in_flight[current_image], VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        throw std::runtime_error("Fence wait failed");
+    if (vkResetFences(device, 1, &in_flight[current_image]) != VK_SUCCESS)
+        throw std::runtime_error("Fence reset failed");
 
     VkCommandBuffer cmd = cmd_bufs[current_image];
-    vkResetCommandBuffer(cmd, 0);
+    if (vkResetCommandBuffer(cmd, 0) != VK_SUCCESS)
+        throw std::runtime_error("Command buffer reset failed");
 
     return {current_image, cmd};
 }
@@ -86,5 +91,7 @@ void FrameSync::submit_and_present(VkQueue graphics, VkQueue present, VkSwapchai
     present_info.swapchainCount     = 1;
     present_info.pSwapchains        = &swapchain;
     present_info.pImageIndices      = &current_image;
-    vkQueuePresentKHR(present, &present_info);
+    VkResult present_result = vkQueuePresentKHR(present, &present_info);
+    if (present_result != VK_SUCCESS && present_result != VK_SUBOPTIMAL_KHR)
+        throw std::runtime_error("Failed to present");
 }
