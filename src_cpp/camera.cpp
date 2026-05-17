@@ -115,20 +115,6 @@ void Camera::render(const Hittable& scene){
     }
 }
 
-static inline Color simulated_skybox(const Ray& ray) {
-    // Lets simulate a light blue skybox gradient if we completly miss.
-    // It is ever so slightly faster to normalize just our Y component since that is all we need
-    auto y = ray.direction.y/ray.direction.length();
-
-    // a skybox that is actually blue up top, white at the horizon, and void underneith
-    if(y>0){
-        return Vector3::lerp( White, BlueSky, y);
-    }else if(y>-0.5){
-        return White * (1.0+(y*2));
-    }else{
-        return Black;
-    }
-}
 
 Color Camera::_cast_ray_for_color(Ray& ray, const Hittable& scene){
     HitRecord rec;
@@ -149,7 +135,7 @@ Color Camera::_cast_ray_for_color(Ray& ray, const Hittable& scene){
             ray = next_bounce;
             ray.recompute_inv_direction();
         } else {
-            accumulated_energy += total_attenuation * simulated_skybox(ray);
+            accumulated_energy += total_attenuation * skybox->color(ray);
             break;
         }
     }

@@ -16,8 +16,8 @@ const Color DarkBlue= {0.0,0.0,0.5};
 const Color BlueSky = {0.4,0.6,0.9};
 
 Image::Image(int width, int height): std::vector<Color>(height*width,{0.0,0.0,0.0}), _height(height), _width(width){}
-int Image::width(){return _width;}
-int Image::height(){return _height;}
+int Image::width() const {return _width;}
+int Image::height() const {return _height;}
 
 Color& Image::get_px(const int& x,const int& y){
     return this->operator[]((y*_width) + x);
@@ -95,4 +95,53 @@ void Image::write_to_png(std::string filename)const{
 
 double Image::linear_to_gamma(double px){
     return sqrt(px);
+}
+
+Image Image::read_from_png(const std::string& filename) {
+    FILE* fp = fopen(filename.c_str(), "rb");
+    if (!fp) {
+        fprintf(stderr, "Error: cannot open %s\n", filename.c_str());
+        std::exit(1);
+    }
+
+    png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (!png_ptr) { fclose(fp); std::exit(1); }
+
+    png_infop info_ptr = png_create_info_struct(png_ptr);
+    if (!info_ptr) { png_destroy_read_struct(&png_ptr, nullptr, nullptr); fclose(fp); std::exit(1); }
+
+    png_init_io(png_ptr, fp);
+    png_read_info(png_ptr, info_ptr);
+
+    int width  = png_get_image_width(png_ptr, info_ptr);
+    int height = png_get_image_height(png_ptr, info_ptr);
+    png_byte color_type = png_get_color_type(png_ptr, info_ptr);
+    png_byte bit_depth  = png_get_bit_depth(png_ptr, info_ptr);
+
+    if (bit_depth == 16)                                          png_set_strip_16(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_PALETTE)                     png_set_palette_to_rgb(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)       png_set_expand_gray_1_2_4_to_8(png_ptr);
+    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))          png_set_tRNS_to_alpha(png_ptr);
+    if (color_type & PNG_COLOR_MASK_ALPHA)                        png_set_strip_alpha(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_GRAY_ALPHA)                  png_set_gray_to_rgb(png_ptr);
+
+    png_read_update_info(png_ptr, info_ptr);
+
+    Image img(width, height);
+    std::vector<png_byte> rowbuf(width * 3);
+    for (int y = 0; y < height; y++) {
+        png_read_row(png_ptr, rowbuf.data(), nullptr);
+        for (int x = 0; x < width; x++) {
+            // sRGB -> linear: undo the sqrt gamma applied on write
+            double r = rowbuf[x*3 + 0] / 255.0;
+            double g = rowbuf[x*3 + 1] / 255.0;
+            double b = rowbuf[x*3 + 2] / 255.0;
+            img.get_px(x, y) = {r*r, g*g, b*b};
+        }
+    }
+
+    png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+    fclose(fp);
+    return img;
 }

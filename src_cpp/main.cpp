@@ -14,6 +14,7 @@ struct RenderConfig {
     int rays_per_pixel = 100;
     int ray_depth = 10;
     int num_frames = 120;
+    std::shared_ptr<Skybox> skybox = std::make_shared<SkylineSkybox>();
 };
 
 static void print_usage(const char* prog) {
@@ -23,6 +24,7 @@ static void print_usage(const char* prog) {
     print("  --rays   N       Rays per pixel (default 100)\n");
     print("  --depth  N       Max ray bounce depth (default 10)\n");
     print("  --frames N       Number of frames to render (default 120)\n");
+    print("  --skybox NAME    Skybox type: skyline (default), void, cubemap <path>\n");
     print("  --help           Show this message\n");
 }
 
@@ -41,6 +43,17 @@ static RenderConfig parse_args(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--rays")   == 0) cfg.rays_per_pixel = need_next();
         else if (std::strcmp(argv[i], "--depth")  == 0) cfg.ray_depth  = need_next();
         else if (std::strcmp(argv[i], "--frames") == 0) cfg.num_frames = need_next();
+        else if (std::strcmp(argv[i], "--skybox") == 0) {
+            if (i + 1 >= argc) { print("Error: --skybox requires a value\n"); std::exit(1); }
+            const char* name = argv[++i];
+            if      (std::strcmp(name, "skyline") == 0) cfg.skybox = std::make_shared<SkylineSkybox>();
+            else if (std::strcmp(name, "void")    == 0) cfg.skybox = std::make_shared<VoidSkybox>();
+            else if (std::strcmp(name, "cubemap") == 0) {
+                if (i + 1 >= argc) { print("Error: --skybox cubemap requires a path\n"); std::exit(1); }
+                cfg.skybox = std::make_shared<CubemapSkybox>(argv[++i]);
+            }
+            else { print("Unknown skybox: {}\n", name); print_usage(argv[0]); std::exit(1); }
+        }
         else if (std::strcmp(argv[i], "--help")   == 0) { print_usage(argv[0]); std::exit(0); }
         else { print("Unknown argument: {}\n", argv[i]); print_usage(argv[0]); std::exit(1); }
     }
@@ -226,6 +239,7 @@ int main(int argc, char** argv){
     // Camera viewport(1920/2,1080/2);
     viewport.sampling_per_pixel = cfg.rays_per_pixel;
     viewport.max_trace_depth    = cfg.ray_depth;
+    viewport.skybox             = cfg.skybox;
     // viewport.sampling_per_pixel = 1000;
     // viewport.ongoing_image_export = 32;
     HittableList spheres;

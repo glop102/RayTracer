@@ -11,12 +11,13 @@ class Image:public std::vector<Color>{
 
     public:
     Image(int width, int height);
-    int width();
-    int height();
+    int width() const;
+    int height() const;
 
     Color& get_px(const int& x,const int& y);
 
     void write_to_png(std::string filename)const;
+    static Image read_from_png(const std::string& filename);
     static double linear_to_gamma(double px);
 };
 

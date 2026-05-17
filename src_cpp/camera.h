@@ -1,11 +1,12 @@
 #pragma once
 #include <string>
 #include <thread>
+#include <memory>
 #include "image.h"
 #include "vec_utils.h"
 #include "utils.h"
 #include "scene.h"
-
+#include "skybox.h"
 
 class Camera{
     private:
@@ -20,6 +21,7 @@ class Camera{
     int sampling_per_pixel = 100;
     int max_trace_depth = 10;
     int ongoing_image_export = 0;
+    std::shared_ptr<Skybox> skybox = std::make_shared<SkylineSkybox>();
 
     protected:
     Vector3 viewport_up,viewport_right; // Calculated at the start of the render based on the look and up directions
