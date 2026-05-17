@@ -13,6 +13,7 @@ struct RenderConfig {
     int height = 1080;
     int rays_per_pixel = 100;
     int ray_depth = 10;
+    int num_frames = 120;
 };
 
 static void print_usage(const char* prog) {
@@ -21,6 +22,7 @@ static void print_usage(const char* prog) {
     print("  --height N       Image height (default 1080)\n");
     print("  --rays   N       Rays per pixel (default 100)\n");
     print("  --depth  N       Max ray bounce depth (default 10)\n");
+    print("  --frames N       Number of frames to render (default 120)\n");
     print("  --help           Show this message\n");
 }
 
@@ -38,6 +40,7 @@ static RenderConfig parse_args(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--height") == 0) cfg.height    = need_next();
         else if (std::strcmp(argv[i], "--rays")   == 0) cfg.rays_per_pixel = need_next();
         else if (std::strcmp(argv[i], "--depth")  == 0) cfg.ray_depth  = need_next();
+        else if (std::strcmp(argv[i], "--frames") == 0) cfg.num_frames = need_next();
         else if (std::strcmp(argv[i], "--help")   == 0) { print_usage(argv[0]); std::exit(0); }
         else { print("Unknown argument: {}\n", argv[i]); print_usage(argv[0]); std::exit(1); }
     }
@@ -152,7 +155,7 @@ void populate_hand_crafted_box_plus_embedded_sphere(HittableList& list){
 
 int main(int argc, char** argv){
     RenderConfig cfg = parse_args(argc, argv);
-    print("Config: {}x{}, {} rays/pixel, depth {}\n", cfg.width, cfg.height, cfg.rays_per_pixel, cfg.ray_depth);
+    print("Config: {}x{}, {} rays/pixel, depth {}, {} frames\n", cfg.width, cfg.height, cfg.rays_per_pixel, cfg.ray_depth, cfg.num_frames);
 
     // Camera viewport(1920*4,1080*4);
     Camera viewport(cfg.width, cfg.height);
@@ -178,10 +181,8 @@ int main(int argc, char** argv){
     world.debug_print_tree();
 
     //Horizontal Rotation
-    int number_frames = 120;
-    for(int frame=0; frame < number_frames; frame++){
-        //int frame = 4; //58;
-        viewport.origin = Vector3{cos(2*PI*(frame/(double)number_frames))*15,5,sin(2*PI*(frame/(double)number_frames))*15};
+    for(int frame=0; frame < cfg.num_frames; frame++){
+        viewport.origin = Vector3{cos(2*PI*(frame/(double)cfg.num_frames))*15,5,sin(2*PI*(frame/(double)cfg.num_frames))*15};
         viewport.look_at(Vector3{0,0,0});
         timer.reset();
         viewport.render(world);
