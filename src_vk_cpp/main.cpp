@@ -23,7 +23,7 @@ int main() {
         VkContext  ctx{window};
         Swapchain  swapchain{ctx, WIDTH, HEIGHT};
         RenderPass render_pass{ctx, swapchain};
-        Pipeline   pipeline{ctx, render_pass, swapchain.extent};
+        Pipeline   pipeline{ctx, render_pass};
 
         const uint32_t image_count = static_cast<uint32_t>(swapchain.images.size());
         VkDevice       dev         = ctx.device.device;
@@ -83,7 +83,7 @@ int main() {
             free_acquire_sems.pop_back();
 
             uint32_t image_index = 0;
-            vkAcquireNextImageKHR(dev, swapchain.swapchain.swapchain,
+            vkAcquireNextImageKHR(dev, swapchain.handle,
                                   UINT64_MAX, acquire_sem, VK_NULL_HANDLE, &image_index);
 
             // The old semaphore for this slot is now free (image was just re-acquired).
@@ -113,6 +113,17 @@ int main() {
 
             vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+            VkViewport viewport{};
+            viewport.width    = static_cast<float>(swapchain.extent.width);
+            viewport.height   = static_cast<float>(swapchain.extent.height);
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor{};
+            scissor.extent = swapchain.extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
             vkEndCommandBuffer(cmd);
@@ -129,7 +140,7 @@ int main() {
             submit.pSignalSemaphores    = &render_finished[image_index];
             vkQueueSubmit(ctx.graphics_queue, 1, &submit, in_flight[image_index]);
 
-            VkSwapchainKHR   sc = swapchain.swapchain.swapchain;
+            VkSwapchainKHR   sc = swapchain.handle;
             VkPresentInfoKHR present_info{};
             present_info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
             present_info.waitSemaphoreCount = 1;

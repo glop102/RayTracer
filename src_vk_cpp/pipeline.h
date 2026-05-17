@@ -9,7 +9,7 @@ struct Pipeline {
     VkPipeline       pipeline = VK_NULL_HANDLE;
     VkDevice         device   = VK_NULL_HANDLE;
 
-    Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent);
+    Pipeline(VkContext& ctx, RenderPass& render_pass);
     ~Pipeline();
 
     Pipeline(const Pipeline&)            = delete;

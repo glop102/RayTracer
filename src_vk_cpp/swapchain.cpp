@@ -15,6 +15,7 @@ Swapchain::Swapchain(VkContext& ctx, uint32_t width, uint32_t height) {
     if (!swap_ret)
         throw std::runtime_error("Swapchain creation failed: " + swap_ret.error().message());
     swapchain = swap_ret.value();
+    handle    = swapchain.swapchain;
 
     auto imgs = swapchain.get_images();
     if (!imgs) throw std::runtime_error("Failed to get swapchain images");

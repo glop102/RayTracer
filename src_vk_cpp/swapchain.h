@@ -5,7 +5,8 @@
 struct VkContext;
 
 struct Swapchain {
-    vkb::Swapchain          swapchain;
+    vkb::Swapchain           swapchain;
+    VkSwapchainKHR           handle       = VK_NULL_HANDLE;
     std::vector<VkImage>     images;
     std::vector<VkImageView> image_views;
     VkFormat                 image_format = VK_FORMAT_UNDEFINED;

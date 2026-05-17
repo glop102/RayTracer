@@ -69,7 +69,7 @@ static VkShaderModule make_module(VkDevice dev, const std::vector<uint32_t>& spv
     return mod;
 }
 
-Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
+Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
     device = ctx.device.device;
 
     auto shader_dir = find_shader_dir();
@@ -96,20 +96,18 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
     input_assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    VkViewport viewport{};
-    viewport.width    = static_cast<float>(extent.width);
-    viewport.height   = static_cast<float>(extent.height);
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.extent = extent;
-
+    // Viewport and scissor are set dynamically each frame so the pipeline
+    // does not need to be recreated on window resize.
     VkPipelineViewportStateCreateInfo viewport_state{};
     viewport_state.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport_state.viewportCount = 1;
-    viewport_state.pViewports    = &viewport;
     viewport_state.scissorCount  = 1;
-    viewport_state.pScissors     = &scissor;
+
+    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic_state{};
+    dynamic_state.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates    = dynamic_states;
 
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -146,6 +144,7 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
     pipeline_info.pRasterizationState = &raster;
     pipeline_info.pMultisampleState   = &multisample;
     pipeline_info.pColorBlendState    = &blend;
+    pipeline_info.pDynamicState       = &dynamic_state;
     pipeline_info.layout              = layout;
     pipeline_info.renderPass          = render_pass.render_pass;
     pipeline_info.subpass             = 0;
