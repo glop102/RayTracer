@@ -23,8 +23,6 @@ final: prev: {
 
     nativeBuildInputs = with final; [
       pkg-config
-      shaderc
-      xxd
     ];
 
     buildInputs = with final; [
@@ -33,6 +31,7 @@ final: prev: {
       vulkan-validation-layers
       vk-bootstrap
       vulkan-memory-allocator
+      shaderc
       glfw
       glm
     ];

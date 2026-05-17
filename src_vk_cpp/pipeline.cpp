@@ -2,23 +2,66 @@
 #include "vk_context.h"
 #include "render_pass.h"
 
-// Generated headers: glslc compiles the GLSL to SPIR-V, xxd converts to a C array.
-// Rebuild with `make shaders` if the GLSL source changes.
-#include "triangle_vert.h"
-#include "triangle_frag.h"
+#include <shaderc/shaderc.hpp>
 
-#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
-static VkShaderModule make_module(VkDevice dev, const unsigned char* data, unsigned int len) {
-    std::vector<uint32_t> code(len / 4);
-    std::memcpy(code.data(), data, len);
+#ifdef __linux__
+#include <unistd.h>
+#endif
 
+// Locate the shaders/ directory. Checks the installed Nix layout first
+// (<binary>/../share/raytracer_vk/shaders/), then falls back to ./shaders/
+// for running directly from the build directory during development.
+static std::filesystem::path find_shader_dir() {
+#ifdef __linux__
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        auto candidate = std::filesystem::path(buf).parent_path()
+                         / "../share/raytracer_vk/shaders";
+        if (std::filesystem::is_directory(candidate))
+            return candidate;
+    }
+#endif
+    if (std::filesystem::is_directory("shaders"))
+        return "shaders";
+    throw std::runtime_error("Cannot locate shader directory");
+}
+
+static std::string read_file(const std::filesystem::path& path) {
+    std::ifstream f(path);
+    if (!f) throw std::runtime_error("Cannot open shader: " + path.string());
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+static std::vector<uint32_t> compile_glsl(const std::string& source,
+                                           const std::string& name,
+                                           shaderc_shader_kind kind) {
+    shaderc::Compiler compiler;
+    shaderc::CompileOptions opts;
+    opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+    opts.SetOptimizationLevel(shaderc_optimization_level_performance);
+
+    auto result = compiler.CompileGlslToSpv(source, kind, name.c_str(), opts);
+    if (result.GetCompilationStatus() != shaderc_compilation_status_success)
+        throw std::runtime_error("Shader compile error in " + name + ":\n" + result.GetErrorMessage());
+
+    return {result.cbegin(), result.cend()};
+}
+
+static VkShaderModule make_module(VkDevice dev, const std::vector<uint32_t>& spv) {
     VkShaderModuleCreateInfo info{};
     info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    info.codeSize = len;
-    info.pCode    = code.data();
+    info.codeSize = spv.size() * sizeof(uint32_t);
+    info.pCode    = spv.data();
 
     VkShaderModule mod;
     if (vkCreateShaderModule(dev, &info, nullptr, &mod) != VK_SUCCESS)
@@ -29,8 +72,12 @@ static VkShaderModule make_module(VkDevice dev, const unsigned char* data, unsig
 Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
     device = ctx.device.device;
 
-    VkShaderModule vert = make_module(device, triangle_vert_spv, triangle_vert_spv_len);
-    VkShaderModule frag = make_module(device, triangle_frag_spv, triangle_frag_spv_len);
+    auto shader_dir = find_shader_dir();
+    auto vert_spv = compile_glsl(read_file(shader_dir / "triangle.vert"), "triangle.vert", shaderc_glsl_vertex_shader);
+    auto frag_spv = compile_glsl(read_file(shader_dir / "triangle.frag"), "triangle.frag", shaderc_glsl_fragment_shader);
+
+    VkShaderModule vert = make_module(device, vert_spv);
+    VkShaderModule frag = make_module(device, frag_spv);
 
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -42,7 +89,6 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
     stages[1].module = frag;
     stages[1].pName  = "main";
 
-    // No vertex buffer — positions are baked into the vertex shader.
     VkPipelineVertexInputStateCreateInfo vert_input{};
     vert_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
@@ -107,7 +153,6 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass, VkExtent2D extent) {
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) != VK_SUCCESS)
         throw std::runtime_error("Graphics pipeline creation failed");
 
-    // Shader modules are only needed during pipeline creation.
     vkDestroyShaderModule(device, vert, nullptr);
     vkDestroyShaderModule(device, frag, nullptr);
 }

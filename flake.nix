@@ -58,7 +58,6 @@
               buildInputs = with pkgs; [
                 pkg-config
                 shaderc
-                xxd
                 vulkan-headers
                 vulkan-loader
                 vulkan-validation-layers
