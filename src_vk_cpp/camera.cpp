@@ -86,7 +86,7 @@ void Camera::on_mouse_button(int button, int action) {
 void Camera::on_cursor_pos(double x, double y) {
     if (dragging) {
         theta -= static_cast<float>(x - last_x) * 0.005f;
-        phi    = std::clamp(phi - static_cast<float>(y - last_y) * 0.005f,
+        phi    = std::clamp(phi + static_cast<float>(y - last_y) * 0.005f,
                             -std::numbers::pi_v<float> / 2.0f + 0.01f,
                              std::numbers::pi_v<float> / 2.0f - 0.01f);
     }
