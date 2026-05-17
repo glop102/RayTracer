@@ -23,40 +23,45 @@ Libraries (use all four from day one):
                     for correct UBO alignment
 
 Milestones:
-  1. Instance + device + swapchain + render pass
-       Use vk-bootstrap for all of this.
-       Enable VK_LAYER_KHRONOS_validation here — do not defer. Shader
-       debugging without validation layers is extremely painful.
-       While creating the logical device, request the RT extension feature
-       structs now even though they are not used yet:
-           VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures{};
-           VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{};
-       Chain them into VkDeviceCreateInfo::pNext. This confirms the GPU
-       supports RT early and means Stage 2 does not require touching device
-       creation again.
+  1. [DONE] Instance + device + swapchain + render pass
+       vk-bootstrap handles instance/device/swapchain boilerplate. Validation
+       layers enabled from the start. RT extension feature structs chained into
+       device pNext (all bits FALSE) to confirm GPU support early.
+       Semaphore free-list design: image_count+1 acquire semaphores; old
+       per-image semaphore recycled on re-acquire. All sync resources
+       (cmd bufs, render_finished, in_flight) indexed by swapchain image index,
+       not frame-in-flight slot.
 
-  2. Draw a triangle (vertex buffer, pipeline, shaders)
-       Hard-code positions in the vertex shader first, confirm the present
-       loop works, then move positions into a VBO. This validates the pipeline
-       state object and render pass before any mesh data is involved.
+  2. [DONE] Draw a triangle (hard-coded vertex shader, pipeline, shaders)
+       Positions and colors hard-coded in the vertex shader. Runtime GLSL→SPIR-V
+       compilation via libshaderc (no pre-compilation step). Dynamic viewport and
+       scissor state (VK_DYNAMIC_STATE_VIEWPORT / SCISSOR) so the pipeline object
+       is never recreated on resize. Framebuffer resize support added: GLFW
+       callback sets a flag; main loop calls Swapchain::recreate() +
+       RenderPass::rebuild_framebuffers() then continues.
 
-  3. Load and draw the bunny mesh (index buffer, depth buffer)
-       Feed the existing PLY loader into a VkBuffer (vertex) + VkBuffer
-       (index) pair allocated via VMA. Add a depth attachment to the render
-       pass. Tests that the CPU-side mesh data can reach the GPU cleanly.
+  3. [IN PROGRESS] Load and draw the bunny mesh (vertex buffer, index buffer, depth buffer)
+       Parse existing PLY files from bunny/reconstruction/ into CPU-side
+       glm::vec3 vertex and uint32_t index arrays. Upload to device-local VkBuffers
+       via VMA staging buffers (TRANSFER_SRC CPU → TRANSFER_DST DEVICE_LOCAL).
+       Add depth attachment (VK_FORMAT_D32_SFLOAT) to the render pass; depth image
+       owned by RenderPass and recreated alongside framebuffers on resize.
+       Camera MVP passed as a push constant (mat4, vertex stage). Shader outputs
+       a height-based color gradient so the mesh is visually meaningful without
+       requiring normals.
 
   4. Orbit camera with a UBO (uniform buffer object)
-       Single VkBuffer allocated with VMA_MEMORY_USAGE_CPU_TO_GPU and kept
-       persistently mapped. Write view/proj matrix each frame. One descriptor
-       set, one binding — do not add complexity beyond this yet.
+       Migrate camera from push constant to a persistently-mapped VkBuffer
+       (VMA_MEMORY_USAGE_CPU_TO_GPU). One descriptor set, one binding. Add GLFW
+       mouse/scroll callbacks for orbit and zoom. Aspect ratio updates automatically
+       on resize since it is derived from swapchain.extent each frame.
 
 This is ~1500 lines of setup but you only write it once. Every subsequent stage
 reuses the same device/swapchain/command buffer scaffolding.
 
 Things to skip for now (add only when a later stage demands them):
   - Multiple render passes or subpasses
-  - Framebuffer resize handling
-  - Descriptor sets beyond the single camera UBO
+  - Descriptor sets beyond the single camera UBO (milestone 4)
   - Push constants, specialization constants, pipeline cache
 
 Skip validation layers in a hurry, but you will regret it. Enable them from day one.

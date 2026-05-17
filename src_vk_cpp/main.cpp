@@ -1,11 +1,16 @@
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "vk_context.h"
 #include "swapchain.h"
 #include "render_pass.h"
 #include "pipeline.h"
 #include "frame_sync.h"
+#include "mesh.h"
 
 static constexpr uint32_t WIDTH  = 1280;
 static constexpr uint32_t HEIGHT = 720;
@@ -29,6 +34,7 @@ int main() {
         RenderPass render_pass{ctx, swapchain};
         Pipeline   pipeline{ctx, render_pass};
         FrameSync  frame_sync{ctx, static_cast<uint32_t>(swapchain.images.size())};
+        Mesh       mesh{ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -53,14 +59,17 @@ int main() {
             if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
                 throw std::runtime_error("Failed to begin command buffer");
 
-            VkClearValue clear_color{{{0.01f, 0.01f, 0.02f, 1.0f}}};
+            VkClearValue clears[2]{};
+            clears[0].color        = {{0.01f, 0.01f, 0.02f, 1.0f}};
+            clears[1].depthStencil = {1.0f, 0};
+
             VkRenderPassBeginInfo rp_begin{};
             rp_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rp_begin.renderPass        = render_pass.render_pass;
             rp_begin.framebuffer       = render_pass.framebuffers[image_index];
             rp_begin.renderArea.extent = swapchain.extent;
-            rp_begin.clearValueCount   = 1;
-            rp_begin.pClearValues      = &clear_color;
+            rp_begin.clearValueCount   = 2;
+            rp_begin.pClearValues      = clears;
 
             vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
@@ -74,7 +83,22 @@ int main() {
             VkRect2D scissor{scissor.offset = {}, scissor.extent = swapchain.extent};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            vkCmdDraw(cmd, 3, 1, 0, 0);
+            VkDeviceSize zero = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buf, &zero);
+            vkCmdBindIndexBuffer(cmd, mesh.index_buf, 0, VK_INDEX_TYPE_UINT32);
+
+            float aspect = static_cast<float>(swapchain.extent.width) /
+                           static_cast<float>(swapchain.extent.height);
+            glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.15f, 0.25f),
+                                         glm::vec3(0.0f, 0.10f, 0.00f),
+                                         glm::vec3(0.0f, 1.0f,  0.0f));
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 10.0f);
+            proj[1][1] *= -1; // Vulkan NDC Y is inverted relative to GLM default
+            glm::mat4 mvp = proj * view;
+            vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT,
+                               0, sizeof(mvp), &mvp);
+
+            vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
             vkCmdEndRenderPass(cmd);
             if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
                 throw std::runtime_error("Failed to end command buffer");

@@ -41,7 +41,7 @@ final: prev: {
     ];
 
     meta = {
-      description = "Vulkan rework of the ray tracer — milestone 2: triangle.";
+      description = "Vulkan rework of the ray tracer — milestone 3: bunny mesh with depth buffer.";
     };
   };
 }

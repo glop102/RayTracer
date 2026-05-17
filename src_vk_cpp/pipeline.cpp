@@ -89,8 +89,23 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
     stages[1].module = frag;
     stages[1].pName  = "main";
 
+    VkVertexInputBindingDescription binding{};
+    binding.binding   = 0;
+    binding.stride    = sizeof(float) * 3; // glm::vec3
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attr{};
+    attr.binding  = 0;
+    attr.location = 0;
+    attr.format   = VK_FORMAT_R32G32B32_SFLOAT;
+    attr.offset   = 0;
+
     VkPipelineVertexInputStateCreateInfo vert_input{};
-    vert_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vert_input.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vert_input.vertexBindingDescriptionCount   = 1;
+    vert_input.pVertexBindingDescriptions      = &binding;
+    vert_input.vertexAttributeDescriptionCount = 1;
+    vert_input.pVertexAttributeDescriptions    = &attr;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
     input_assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -129,8 +144,21 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
     blend.attachmentCount = 1;
     blend.pAttachments    = &blend_attachment;
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable  = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+
+    VkPushConstantRange pc_range{};
+    pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pc_range.offset     = 0;
+    pc_range.size       = sizeof(float) * 16; // mat4
+
     VkPipelineLayoutCreateInfo layout_info{};
-    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.pushConstantRangeCount = 1;
+    layout_info.pPushConstantRanges    = &pc_range;
     if (vkCreatePipelineLayout(device, &layout_info, nullptr, &layout) != VK_SUCCESS)
         throw std::runtime_error("Pipeline layout creation failed");
 
@@ -144,6 +172,7 @@ Pipeline::Pipeline(VkContext& ctx, RenderPass& render_pass) {
     pipeline_info.pRasterizationState = &raster;
     pipeline_info.pMultisampleState   = &multisample;
     pipeline_info.pColorBlendState    = &blend;
+    pipeline_info.pDepthStencilState  = &depth_stencil;
     pipeline_info.pDynamicState       = &dynamic_state;
     pipeline_info.layout              = layout;
     pipeline_info.renderPass          = render_pass.render_pass;
