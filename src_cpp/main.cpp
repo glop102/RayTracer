@@ -87,6 +87,63 @@ void populate_random_sphere_of_spheres(HittableList& list, int num_spheres, Real
     }
 }
 
+void populate_cornell_box(HittableList& list, const BBox& room) {
+    auto white = std::make_shared<BRDMaterial>(Color{0.73,0.73,0.73}, Color{0.73,0.73,0.73}, Black, 0.0, 1.0);
+    auto red   = std::make_shared<BRDMaterial>(Color{0.65,0.05,0.05}, Color{0.65,0.05,0.05}, Black, 0.0, 1.0);
+    auto green = std::make_shared<BRDMaterial>(Color{0.12,0.45,0.15}, Color{0.12,0.45,0.15}, Black, 0.0, 1.0);
+    auto light = std::make_shared<BRDMaterial>(Black, Black, Color{12,12,12}, 0.0, 1.0);
+    auto glass = std::make_shared<PureTransparentMaterial>(1.5);
+
+    const Point3& lo = room.min;
+    const Point3& hi = room.max;
+
+    // Normals for all walls point INTO the room.
+    // Room opens toward camera at -Z; back wall is at hi.z.
+    // Winding verified by e1×e2 cross product for each face.
+
+    // Back wall (z=hi.z), normal -Z: top-left → top-right → bot-right → bot-left
+    for (auto& t : make_quad({lo.x,hi.y,hi.z},{hi.x,hi.y,hi.z},{hi.x,lo.y,hi.z},{lo.x,lo.y,hi.z}, white)) list.add(t);
+    // Floor (y=lo.y), normal +Y: front-left → front-right → back-right → back-left
+    for (auto& t : make_quad({lo.x,lo.y,lo.z},{hi.x,lo.y,lo.z},{hi.x,lo.y,hi.z},{lo.x,lo.y,hi.z}, white)) list.add(t);
+    // Ceiling (y=hi.y), normal -Y: front-left → back-left → back-right → front-right
+    for (auto& t : make_quad({lo.x,hi.y,lo.z},{lo.x,hi.y,hi.z},{hi.x,hi.y,hi.z},{hi.x,hi.y,lo.z}, white)) list.add(t);
+    // Left wall (x=lo.x, red), normal +X: back-bot → front-bot → front-top → back-top
+    for (auto& t : make_quad({lo.x,lo.y,hi.z},{lo.x,lo.y,lo.z},{lo.x,hi.y,lo.z},{lo.x,hi.y,hi.z}, red)) list.add(t);
+    // Right wall (x=hi.x, green), normal -X: front-bot → back-bot → back-top → front-top
+    for (auto& t : make_quad({hi.x,lo.y,lo.z},{hi.x,lo.y,hi.z},{hi.x,hi.y,hi.z},{hi.x,hi.y,lo.z}, green)) list.add(t);
+
+    // Ceiling light: small panel slightly inset, normal -Y (same winding as ceiling)
+    double lx1 = lo.x + (hi.x-lo.x)*0.3,  lx2 = lo.x + (hi.x-lo.x)*0.7;
+    double lz1 = lo.z + (hi.z-lo.z)*0.3,  lz2 = lo.z + (hi.z-lo.z)*0.7;
+    double ly  = hi.y - 0.01;
+    for (auto& t : make_quad({lx1,ly,lz1},{lx1,ly,lz2},{lx2,ly,lz2},{lx2,ly,lz1}, light)) list.add(t);
+
+    // Load bunny in object space (no translation offset — Instance handles placement)
+    HittableList bunny;
+    double scale = (hi.y - lo.y) * 0.55;
+    load_ply_file("bunny/reconstruction/bun_zipper.ply", bunny, AluminiumDull, scale, {0,0,0});
+
+    // Glass prism snugly around the bunny in object space
+    BBox bunny_bbox = bunny.bbox();
+    double pad = (hi.y - lo.y) * 0.02;
+    BBox padded{
+        {bunny_bbox.min.x-pad, bunny_bbox.min.y-pad, bunny_bbox.min.z-pad},
+        {bunny_bbox.max.x+pad, bunny_bbox.max.y+pad, bunny_bbox.max.z+pad}
+    };
+    for (auto& t : make_box(padded, glass)) bunny.add(t);
+
+    // Build a single Instance from the combined bunny + glass geometry,
+    // then place it: sitting on the floor, centered in x and z.
+    auto inst = std::make_shared<Instance>(bunny.objects);
+    BBox obj_bbox = inst->bbox(); // identity transform, so same as raw bbox
+    inst->translate({
+        (lo.x+hi.x)/2.0 - obj_bbox.center().x,
+        lo.y            - obj_bbox.min.y,
+        (lo.z+hi.z)/2.0 - obj_bbox.center().z,
+    });
+    list.add(inst);
+}
+
 void populate_triangles_crafted_test(HittableList& list){
     auto glass = std::make_shared<PureTransparentMaterial>(1.5);
 
@@ -171,25 +228,24 @@ int main(int argc, char** argv){
     // viewport.sampling_per_pixel = 1000;
     // viewport.ongoing_image_export = 32;
     HittableList spheres;
-    // populate_random_spheres_plane_sitting(spheres,200,RealRange{0.5,4},50,50);
-    // populate_random_spheres_volume(spheres,1000,RealRange{0.5,4},50,50,50);
-    // populate_random_spheres_volume(spheres,100,RealRange{0.5,4},20,20,20);
-    // populate_random_spheres_volume(spheres,20,RealRange{0.5,4},10,10,10);
-
-    // populate_sphere_crafted_test(spheres);
-    populate_triangles_crafted_test(spheres);
-    // populate_hand_crafted_box_plus_embedded_sphere(spheres);
-    populate_random_sphere_of_spheres(spheres,500,RealRange{2.0,6.0},100);
+    BBox cornell_room{{-5, 0, 0}, {5, 10, 10}};
+    populate_cornell_box(spheres, cornell_room);
 
     Stopwatch timer,totalTimer;
     BVH8List world(spheres.objects);
     print("BVH Creation Time  {}\n",timer.duration());
     world.debug_print_tree();
 
-    //Horizontal Rotation
+    // Camera orbits around the Cornell box looking at its center.
+    // Room opens toward -Z, so orbit stays at z <= -5 to look in from the front.
+    Vector3 room_center{0, 5, 5};
     for(int frame=0; frame < cfg.num_frames; frame++){
-        viewport.origin = Vector3{cos(2*PI*(frame/(double)cfg.num_frames))*15,5,sin(2*PI*(frame/(double)cfg.num_frames))*15};
-        viewport.look_at(Vector3{0,0,0});
+        double t = frame / (double)cfg.num_frames;
+        // Gentle arc: swing ±40° horizontally in front of the opening
+        double angle = (t - 0.5) * 2.0 * 0.7; // -0.7..+0.7 radians
+        double dist = 18.0;
+        viewport.origin = Vector3{std::sin(angle)*dist, 5, -std::cos(angle)*dist + room_center.z};
+        viewport.look_at(room_center);
         timer.reset();
         viewport.render(world);
         print("Frame: {} - {}\n",frame,ms_to_human(timer.duration()));

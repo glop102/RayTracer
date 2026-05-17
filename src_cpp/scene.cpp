@@ -1,6 +1,7 @@
 #include "scene.h"
 #include <utility>
 #include <functional>
+#include <cstring>
 #include <immintrin.h>
 
 using std::shared_ptr;
@@ -35,6 +36,89 @@ BBox HittableList::bbox()const{
             return b;
     }
 }
+
+
+//===================================================================
+// Instance
+//===================================================================
+
+Instance::Instance(ObjList& objects, int max_depth)
+    : translation{0,0,0} {
+    // Identity rotation
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            R[i][j] = (i == j) ? 1.0 : 0.0;
+    bvh = std::make_shared<BVH8List>(objects, max_depth);
+    recompute_bbox();
+}
+
+Vector3 Instance::rot(const Vector3& v) const {
+    return {
+        R[0][0]*v.x + R[0][1]*v.y + R[0][2]*v.z,
+        R[1][0]*v.x + R[1][1]*v.y + R[1][2]*v.z,
+        R[2][0]*v.x + R[2][1]*v.y + R[2][2]*v.z,
+    };
+}
+Vector3 Instance::rot_inv(const Vector3& v) const {
+    // R is orthogonal so R^-1 = R^T
+    return {
+        R[0][0]*v.x + R[1][0]*v.y + R[2][0]*v.z,
+        R[0][1]*v.x + R[1][1]*v.y + R[2][1]*v.z,
+        R[0][2]*v.x + R[1][2]*v.y + R[2][2]*v.z,
+    };
+}
+
+void Instance::recompute_bbox() {
+    BBox b = bvh->bbox();
+    memoized_bbox = BBox{};
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 2; j++)
+            for (int k = 0; k < 2; k++) {
+                Point3 corner{
+                    i ? b.max.x : b.min.x,
+                    j ? b.max.y : b.min.y,
+                    k ? b.max.z : b.min.z,
+                };
+                memoized_bbox.absorb(rot(corner) + translation);
+            }
+}
+
+Instance& Instance::rotate_y(double degrees) {
+    double rad = degrees * PI / 180.0;
+    double c = std::cos(rad), s = std::sin(rad);
+    // Y rotation matrix: x'=cx+sz, y'=y, z'=-sx+cz
+    double Ry[3][3] = {{c,0,s},{0,1,0},{-s,0,c}};
+    // Compose: R = Ry * R
+    double nr[3][3] = {};
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++)
+                nr[i][j] += Ry[i][k] * R[k][j];
+    std::memcpy(R, nr, sizeof(R));
+    recompute_bbox();
+    return *this;
+}
+
+Instance& Instance::translate(const Vector3& offset) {
+    translation += offset;
+    recompute_bbox();
+    return *this;
+}
+
+bool Instance::hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const {
+    // Transform ray to object space: R^T * (origin - t), R^T * direction
+    Ray obj_ray(
+        rot_inv(ray.origin - translation),
+        rot_inv(ray.direction)
+    );
+    if (!bvh->hit(obj_ray, allowed_distance, rec)) return false;
+    // Transform result back to world space
+    rec.intersection_point = rot(rec.intersection_point) + translation;
+    rec.normal = rot(rec.normal);
+    return true;
+}
+
+BBox Instance::bbox() const { return memoized_bbox; }
 
 
 //===================================================================

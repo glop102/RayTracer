@@ -61,3 +61,25 @@ class BVH8List : public Hittable {
     BBox bbox() const;
     void debug_print_tree(int = 0) const;
 };
+
+
+// An Instance wraps a BVH8List with a rigid-body world transform (rotation + translation).
+// Build the geometry in object space, then rotate_y / translate to place it in the scene.
+// Transforms compose left-to-right: rotate first, then translate.
+class Instance : public Hittable {
+    std::shared_ptr<BVH8List> bvh;
+    double R[3][3];      // rotation: object → world
+    Vector3 translation; // world-space offset applied after rotation
+    BBox memoized_bbox;
+
+    Vector3 rot(const Vector3& v) const;     // apply R  (obj → world)
+    Vector3 rot_inv(const Vector3& v) const; // apply R^T (world → obj)
+    void recompute_bbox();
+
+public:
+    Instance(ObjList& objects, int max_depth = 8);
+    Instance& rotate_y(double degrees);
+    Instance& translate(const Vector3& offset);
+    bool hit(const Ray& ray, RealRange& allowed_distance, HitRecord& rec) const override;
+    BBox bbox() const override;
+};

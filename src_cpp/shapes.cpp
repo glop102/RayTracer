@@ -181,6 +181,13 @@ std::vector<std::shared_ptr<Triangle>> make_box(const BBox& box, std::shared_ptr
     };
 }
 
+std::vector<std::shared_ptr<Triangle>> make_quad(const Point3& p1, const Point3& p2, const Point3& p3, const Point3& p4, std::shared_ptr<Material> material) {
+    return {
+        std::make_shared<Triangle>(p1, p2, p3, material),
+        std::make_shared<Triangle>(p1, p3, p4, material),
+    };
+}
+
 std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& center, std::shared_ptr<Material> material) {
     /*
     We want counter-clockwise on every face
@@ -295,3 +302,4 @@ std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& ce
         ),
     };
 }
+

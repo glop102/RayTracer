@@ -50,3 +50,5 @@ class Sphere:public Hittable{
 
 std::vector<std::shared_ptr<Triangle>> make_cube(double radius, const Point3& center, std::shared_ptr<Material> material);
 std::vector<std::shared_ptr<Triangle>> make_box(const BBox& box, std::shared_ptr<Material> material);
+// p1→p2→p3→p4 in CCW order defines the outward normal direction
+std::vector<std::shared_ptr<Triangle>> make_quad(const Point3& p1, const Point3& p2, const Point3& p3, const Point3& p4, std::shared_ptr<Material> material);
