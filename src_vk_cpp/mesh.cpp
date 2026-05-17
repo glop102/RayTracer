@@ -61,7 +61,6 @@ static void load_ply(const std::string& path,
         indices.push_back(a);
         indices.push_back(b);
         indices.push_back(c);
-        // fan-triangulate any polygon with more than 3 vertices
         for (int e = 3; e < count; e++) {
             uint32_t d;
             f >> d;
@@ -74,36 +73,16 @@ static void load_ply(const std::string& path,
     }
 }
 
-static VkCommandBuffer begin_one_shot(VkContext& ctx) {
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool        = ctx.command_pool;
-    alloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
+// Usage flags required for RT BLAS geometry input + rasterization vertex/index.
+static constexpr VkBufferUsageFlags VERTEX_USAGE =
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
-    VkCommandBuffer cmd;
-    if (vkAllocateCommandBuffers(ctx.device.device, &alloc, &cmd) != VK_SUCCESS)
-        throw std::runtime_error("One-shot command buffer allocation failed");
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    return cmd;
-}
-
-static void end_one_shot(VkContext& ctx, VkCommandBuffer cmd) {
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers    = &cmd;
-    vkQueueSubmit(ctx.graphics_queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(ctx.graphics_queue);
-
-    vkFreeCommandBuffers(ctx.device.device, ctx.command_pool, 1, &cmd);
-}
+static constexpr VkBufferUsageFlags INDEX_USAGE =
+    VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
 static void upload_buffer(VkContext& ctx,
                           VkBufferUsageFlags usage,
@@ -144,10 +123,10 @@ static void upload_buffer(VkContext& ctx,
                         &out_buf, &out_alloc, nullptr) != VK_SUCCESS)
         throw std::runtime_error("Device buffer creation failed");
 
-    VkCommandBuffer cmd = begin_one_shot(ctx);
+    VkCommandBuffer cmd = ctx.begin_one_shot();
     VkBufferCopy region{0, 0, size};
     vkCmdCopyBuffer(cmd, stg_buf, out_buf, 1, &region);
-    end_one_shot(ctx, cmd);
+    ctx.end_one_shot(cmd);
 
     vmaDestroyBuffer(ctx.allocator, stg_buf, stg_alloc);
 }
@@ -159,15 +138,26 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
     std::vector<glm::vec3> verts;
     std::vector<uint32_t>  inds;
     load_ply(ply_path, verts, inds);
-    index_count = static_cast<uint32_t>(inds.size());
 
-    upload_buffer(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    vertex_count = static_cast<uint32_t>(verts.size());
+    index_count  = static_cast<uint32_t>(inds.size());
+
+    upload_buffer(ctx, VERTEX_USAGE,
                   verts.data(), verts.size() * sizeof(glm::vec3),
                   vertex_buf, vertex_alloc);
 
-    upload_buffer(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    upload_buffer(ctx, INDEX_USAGE,
                   inds.data(), inds.size() * sizeof(uint32_t),
                   index_buf, index_alloc);
+
+    // Device addresses needed by BLAS geometry descriptor.
+    VkBufferDeviceAddressInfo addr_info{};
+    addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addr_info.buffer = vertex_buf;
+    vertex_addr = vkGetBufferDeviceAddress(device, &addr_info);
+
+    addr_info.buffer = index_buf;
+    index_addr = vkGetBufferDeviceAddress(device, &addr_info);
 }
 
 Mesh::~Mesh() {

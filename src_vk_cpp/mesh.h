@@ -11,7 +11,10 @@ struct Mesh {
     VkBuffer      index_buf    = VK_NULL_HANDLE;
     VmaAllocation vertex_alloc = {};
     VmaAllocation index_alloc  = {};
+    uint32_t      vertex_count = 0;
     uint32_t      index_count  = 0;
+    VkDeviceAddress vertex_addr = 0;  // for BLAS geometry input
+    VkDeviceAddress index_addr  = 0;
 
     Mesh(VkContext& ctx, const std::string& ply_path);
     ~Mesh();

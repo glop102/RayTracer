@@ -7,6 +7,15 @@
 
 struct VkContext;
 
+// Push constant layout for the raygen shader.
+// Four vec4s = 64 bytes, fits in the guaranteed 128-byte minimum.
+struct RtCameraPush {
+    glm::vec4 origin;      // xyz = eye position
+    glm::vec4 lower_left;  // xyz = lower-left corner of virtual screen at distance 1
+    glm::vec4 horizontal;  // xyz = full horizontal span of virtual screen
+    glm::vec4 vertical;    // xyz = full vertical span of virtual screen
+};
+
 // Owns the camera UBO, its descriptor set, and orbit input state.
 // Construct before Pipeline — pipeline layout needs descriptor_set_layout.
 struct Camera {
@@ -24,6 +33,9 @@ struct Camera {
 
     // Recompute MVP from current orbit state and write it into the UBO.
     void update(VkExtent2D extent);
+
+    // Build push constant data for the raygen shader from current orbit state.
+    RtCameraPush rt_push(VkExtent2D extent) const;
 
     Camera(const Camera&)            = delete;
     Camera& operator=(const Camera&) = delete;

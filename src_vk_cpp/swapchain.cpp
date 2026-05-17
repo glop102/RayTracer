@@ -11,6 +11,7 @@ Swapchain::Swapchain(VkContext& ctx, uint32_t width, uint32_t height) {
         .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
         .add_fallback_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(width, height)
+        .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
         .build();
     if (!swap_ret)
         throw std::runtime_error("Swapchain creation failed: " + swap_ret.error().message());

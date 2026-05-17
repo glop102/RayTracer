@@ -4,7 +4,9 @@ CXXFLAGS := -std=c++20 -O2 -Wall -Wextra
 CXXFLAGS += $(shell pkg-config --cflags glfw3 vulkan glm)
 LDFLAGS  := $(shell pkg-config --libs glfw3 vulkan shaderc) -lvk-bootstrap
 
-SRCS   := main.cpp vk_context.cpp swapchain.cpp render_pass.cpp pipeline.cpp frame_sync.cpp mesh.cpp camera.cpp
+SRCS   := main.cpp vk_context.cpp swapchain.cpp frame_sync.cpp mesh.cpp camera.cpp \
+          accel.cpp rt_output.cpp rt_pipeline.cpp \
+          pipeline.cpp render_pass.cpp
 OBJS   := $(SRCS:.cpp=.o)
 TARGET := raytracer_vk
 
@@ -20,8 +22,11 @@ $(TARGET): $(OBJS)
 
 install:
 	install -Dm755 $(TARGET) $(DESTDIR)/bin/$(TARGET)
-	install -Dm644 shaders/triangle.vert $(DESTDIR)/share/raytracer_vk/shaders/triangle.vert
-	install -Dm644 shaders/triangle.frag $(DESTDIR)/share/raytracer_vk/shaders/triangle.frag
+	install -Dm644 shaders/triangle.vert      $(DESTDIR)/share/raytracer_vk/shaders/triangle.vert
+	install -Dm644 shaders/triangle.frag      $(DESTDIR)/share/raytracer_vk/shaders/triangle.frag
+	install -Dm644 shaders/raygen.rgen        $(DESTDIR)/share/raytracer_vk/shaders/raygen.rgen
+	install -Dm644 shaders/miss.rmiss         $(DESTDIR)/share/raytracer_vk/shaders/miss.rmiss
+	install -Dm644 shaders/closest_hit.rchit  $(DESTDIR)/share/raytracer_vk/shaders/closest_hit.rchit
 
 clean:
 	rm -f $(OBJS) $(TARGET)

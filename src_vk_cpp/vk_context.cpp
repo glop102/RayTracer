@@ -11,6 +11,11 @@
 
 #include <stdexcept>
 
+#define LOAD_PFN(name) \
+    pfn_##name = reinterpret_cast<PFN_##name>( \
+        vkGetDeviceProcAddr(device.device, #name)); \
+    if (!pfn_##name) throw std::runtime_error("Failed to load " #name)
+
 VkContext::VkContext(GLFWwindow* window) {
     // ------------------------------------------------------------------ Instance
     auto inst_ret = vkb::InstanceBuilder{}
@@ -27,21 +32,22 @@ VkContext::VkContext(GLFWwindow* window) {
     if (glfwCreateWindowSurface(instance.instance, window, nullptr, &surface) != VK_SUCCESS)
         throw std::runtime_error("Window surface creation failed");
 
-    // ------------------------------------------------------------------ RT feature structs
-    // Chained now so device creation fails fast if the GPU does not support RT.
-    // Feature bits are all VK_FALSE here; Stage 2 will query and enable them.
+    // ------------------------------------------------------------------ RT feature structs (with bits enabled)
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_features{};
-    rt_pipeline_features.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    rt_pipeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    rt_pipeline_features.rayTracingPipeline = VK_TRUE;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR as_features{};
-    as_features.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    as_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    as_features.accelerationStructure = VK_TRUE;
+
+    // bufferDeviceAddress and descriptorIndexing are Vulkan 1.2 core.
+    VkPhysicalDeviceVulkan12Features vk12_features{};
+    vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    vk12_features.bufferDeviceAddress = VK_TRUE;
+    vk12_features.descriptorIndexing  = VK_TRUE;
 
     // ------------------------------------------------------------------ Physical device
-    // Require RT extensions so an incapable GPU is caught here rather than later.
-    // VK_KHR_DEFERRED_HOST_OPERATIONS is a prerequisite for acceleration structures.
-    // buffer_device_address and descriptor_indexing are Vulkan 1.2 core, no extension needed.
     auto phys_ret = vkb::PhysicalDeviceSelector{instance}
         .set_surface(surface)
         .set_minimum_version(1, 2)
@@ -57,6 +63,7 @@ VkContext::VkContext(GLFWwindow* window) {
     auto dev_ret = vkb::DeviceBuilder{physical_device}
         .add_pNext(&rt_pipeline_features)
         .add_pNext(&as_features)
+        .add_pNext(&vk12_features)
         .build();
     if (!dev_ret)
         throw std::runtime_error("Logical device creation failed: " + dev_ret.error().message());
@@ -81,7 +88,7 @@ VkContext::VkContext(GLFWwindow* window) {
     if (vkCreateCommandPool(device.device, &pool_info, nullptr, &command_pool) != VK_SUCCESS)
         throw std::runtime_error("Command pool creation failed");
 
-    // ------------------------------------------------------------------ VMA
+    // ------------------------------------------------------------------ VMA (with buffer device address)
     VmaVulkanFunctions vma_fns{};
     vma_fns.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
     vma_fns.vkGetDeviceProcAddr   = vkGetDeviceProcAddr;
@@ -92,8 +99,27 @@ VkContext::VkContext(GLFWwindow* window) {
     alloc_info.instance         = instance.instance;
     alloc_info.vulkanApiVersion = VK_API_VERSION_1_2;
     alloc_info.pVulkanFunctions = &vma_fns;
+    alloc_info.flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     if (vmaCreateAllocator(&alloc_info, &allocator) != VK_SUCCESS)
         throw std::runtime_error("VMA allocator creation failed");
+
+    // ------------------------------------------------------------------ RT extension function pointers
+    LOAD_PFN(vkCreateAccelerationStructureKHR);
+    LOAD_PFN(vkDestroyAccelerationStructureKHR);
+    LOAD_PFN(vkGetAccelerationStructureBuildSizesKHR);
+    LOAD_PFN(vkCmdBuildAccelerationStructuresKHR);
+    LOAD_PFN(vkGetAccelerationStructureDeviceAddressKHR);
+    LOAD_PFN(vkCreateRayTracingPipelinesKHR);
+    LOAD_PFN(vkGetRayTracingShaderGroupHandlesKHR);
+    LOAD_PFN(vkCmdTraceRaysKHR);
+
+    // ------------------------------------------------------------------ RT pipeline properties
+    rt_pipeline_props.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    VkPhysicalDeviceProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &rt_pipeline_props;
+    vkGetPhysicalDeviceProperties2(physical_device.physical_device, &props2);
 }
 
 VkContext::~VkContext() {
@@ -102,4 +128,35 @@ VkContext::~VkContext() {
     vkb::destroy_device(device);
     vkb::destroy_surface(instance, surface);
     vkb::destroy_instance(instance);
+}
+
+VkCommandBuffer VkContext::begin_one_shot() const {
+    VkCommandBufferAllocateInfo alloc{};
+    alloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc.commandPool        = command_pool;
+    alloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    if (vkAllocateCommandBuffers(device.device, &alloc, &cmd) != VK_SUCCESS)
+        throw std::runtime_error("One-shot command buffer allocation failed");
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    return cmd;
+}
+
+void VkContext::end_one_shot(VkCommandBuffer cmd) const {
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers    = &cmd;
+    vkQueueSubmit(graphics_queue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue);
+
+    vkFreeCommandBuffers(device.device, command_pool, 1, &cmd);
 }

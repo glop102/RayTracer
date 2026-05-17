@@ -1,0 +1,40 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 1, rgba8) uniform image2D output_image;
+
+layout(push_constant) uniform Camera {
+    vec4 origin;
+    vec4 lower_left;
+    vec4 horizontal;
+    vec4 vertical;
+} cam;
+
+layout(location = 0) rayPayloadEXT vec3 payload;
+
+void main() {
+    // Map pixel center to [0,1] UV.
+    vec2 uv = (vec2(gl_LaunchIDEXT.xy) + 0.5) / vec2(gl_LaunchSizeEXT.xy);
+
+    vec3 origin = cam.origin.xyz;
+    vec3 dir    = normalize(cam.lower_left.xyz
+                            + uv.x * cam.horizontal.xyz
+                            + uv.y * cam.vertical.xyz
+                            - origin);
+
+    payload = vec3(0.0);
+    traceRayEXT(tlas,
+                gl_RayFlagsOpaqueEXT,
+                0xFF,    // cull mask — hit all instances
+                0,       // sbt record offset
+                0,       // sbt record stride
+                0,       // miss shader index
+                origin,
+                0.001,
+                dir,
+                10000.0,
+                0);      // payload location
+
+    imageStore(output_image, ivec2(gl_LaunchIDEXT.xy), vec4(payload, 1.0));
+}

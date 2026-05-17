@@ -5,8 +5,7 @@
 struct GLFWwindow;
 
 // Owns the Vulkan instance, surface, physical/logical device, queues,
-// command pool, and VMA allocator. Requires RT extensions at device creation
-// so GPU support is confirmed before any later stage work begins.
+// command pool, VMA allocator, and RT extension function pointers.
 struct VkContext {
     vkb::Instance       instance;
     VkSurfaceKHR        surface          = VK_NULL_HANDLE;
@@ -21,9 +20,26 @@ struct VkContext {
 
     VkCommandPool command_pool = VK_NULL_HANDLE;
 
+    // RT pipeline properties (handle sizes, alignment) queried at init.
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_pipeline_props{};
+
+    // KHR extension function pointers — loaded after logical device creation.
+    PFN_vkCreateAccelerationStructureKHR          pfn_vkCreateAccelerationStructureKHR          = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR         pfn_vkDestroyAccelerationStructureKHR         = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR   pfn_vkGetAccelerationStructureBuildSizesKHR   = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR       pfn_vkCmdBuildAccelerationStructuresKHR       = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR pfn_vkGetAccelerationStructureDeviceAddressKHR = nullptr;
+    PFN_vkCreateRayTracingPipelinesKHR            pfn_vkCreateRayTracingPipelinesKHR            = nullptr;
+    PFN_vkGetRayTracingShaderGroupHandlesKHR      pfn_vkGetRayTracingShaderGroupHandlesKHR      = nullptr;
+    PFN_vkCmdTraceRaysKHR                         pfn_vkCmdTraceRaysKHR                         = nullptr;
+
     explicit VkContext(GLFWwindow* window);
     ~VkContext();
 
     VkContext(const VkContext&)            = delete;
     VkContext& operator=(const VkContext&) = delete;
+
+    // One-shot command buffer helpers for uploads and AS builds.
+    VkCommandBuffer begin_one_shot() const;
+    void            end_one_shot(VkCommandBuffer cmd) const;
 };

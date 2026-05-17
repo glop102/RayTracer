@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <numbers>
 #include <stdexcept>
@@ -96,6 +97,28 @@ void Camera::on_cursor_pos(double x, double y) {
 
 void Camera::on_scroll(double dy) {
     radius = std::clamp(radius * (dy > 0 ? 0.92f : 1.08f), 0.05f, 2.0f);
+}
+
+RtCameraPush Camera::rt_push(VkExtent2D extent) const {
+    float eye_x = target.x + radius * std::cos(phi) * std::sin(theta);
+    float eye_y = target.y + radius * std::sin(phi);
+    float eye_z = target.z + radius * std::cos(phi) * std::cos(theta);
+    glm::vec3 origin{eye_x, eye_y, eye_z};
+
+    glm::vec3 w = glm::normalize(origin - target);
+    glm::vec3 u = glm::normalize(glm::cross(glm::vec3{0.0f, 1.0f, 0.0f}, w));
+    glm::vec3 v = glm::cross(w, u);
+
+    float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    float half_h = std::tan(glm::radians(45.0f) / 2.0f);
+    float half_w = aspect * half_h;
+
+    RtCameraPush push{};
+    push.origin     = glm::vec4(origin, 0.0f);
+    push.lower_left = glm::vec4(origin - half_w * u - half_h * v - w, 0.0f);
+    push.horizontal = glm::vec4(2.0f * half_w * u, 0.0f);
+    push.vertical   = glm::vec4(2.0f * half_h * v, 0.0f);
+    return push;
 }
 
 void Camera::update(VkExtent2D extent) {
