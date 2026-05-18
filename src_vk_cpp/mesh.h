@@ -1,6 +1,8 @@
 #pragma once
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
 #include <cstdint>
 #include <string>
 
@@ -17,6 +19,7 @@ struct Mesh {
     VkDeviceAddress index_addr  = 0;
 
     Mesh(VkContext& ctx, const std::string& ply_path);
+    Mesh(VkContext& ctx, glm::vec3 min_pt, glm::vec3 max_pt); // axis-aligned box (6 faces, face normals)
     ~Mesh();
 
     Mesh(const Mesh&)            = delete;

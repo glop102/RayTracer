@@ -62,36 +62,44 @@ int main() {
         Camera    camera{ctx};
         app.camera = &camera;
         FrameSync frame_sync{ctx, static_cast<uint32_t>(swapchain.images.size())};
-        Mesh      mesh{ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
+        Mesh mesh{ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
+        Mesh box {ctx, glm::vec3{-0.55f, -0.03f, -0.20f},
+                       glm::vec3{ 0.55f,  0.22f,  0.20f}};
 
-        AccelStructure blas = build_blas(ctx, mesh);
+        AccelStructure blas      = build_blas(ctx, mesh);
+        AccelStructure glass_blas= build_blas(ctx, box, false); // non-opaque for any-hit
 
         // Three bunnies side by side, each with a different material.
+        // Glass box surrounds them (hit group 1).
         auto translate = [](float tx, float ty, float tz) {
             glm::mat4 m(1.0f);
             m[3] = glm::vec4(tx, ty, tz, 1.0f);
             return m;
         };
         std::vector<TlasInstance> tlas_instances = {
-            {&blas, translate(-0.35f, 0.0f, 0.0f), 0},
-            {&blas, glm::mat4(1.0f),               1},
-            {&blas, translate( 0.35f, 0.0f, 0.0f), 2},
+            {&blas,       translate(-0.35f, 0.0f, 0.0f), 0, 0}, // left   — opaque
+            {&blas,       glm::mat4(1.0f),               1, 0}, // centre — opaque
+            {&blas,       translate( 0.35f, 0.0f, 0.0f), 2, 0}, // right  — opaque
+            {&glass_blas, glm::mat4(1.0f),               3, 1}, // glass box — hit group 1
         };
         AccelStructure tlas = build_tlas(ctx, tlas_instances);
 
         std::vector<GpuMeshRef> mesh_refs = {
-            {mesh.vertex_addr, mesh.index_addr},
+            {mesh.vertex_addr, mesh.index_addr},  // mesh 0: bunny
+            {box.vertex_addr,  box.index_addr },  // mesh 1: glass box
         };
         std::vector<GpuMaterial> materials = {
-            // diffuse              roughness  specular             _pad0  emissive      _pad1
-            {{0.75f, 0.75f, 0.75f}, 0.15f, {0.9f,  0.9f,  0.9f},  0.0f, {0,0,0}, 0.0f}, // AluminiumDull
-            {{0.80f, 0.15f, 0.10f}, 0.92f, {0.5f,  0.5f,  0.5f},  0.0f, {0,0,0}, 0.0f}, // MatteRed
-            {{0.80f, 0.60f, 0.20f}, 0.02f, {1.0f,  0.9f,  0.5f},  0.0f, {0,0,0}, 0.0f}, // GoldMirror
+            // diffuse              roughness  specular              ior   emissive  _pad1
+            {{0.75f, 0.75f, 0.75f}, 0.15f, {0.9f,  0.9f,  0.9f}, 0.0f, {0,0,0}, 0.0f}, // 0: AluminiumDull
+            {{0.80f, 0.15f, 0.10f}, 0.92f, {0.5f,  0.5f,  0.5f}, 0.0f, {0,0,0}, 0.0f}, // 1: MatteRed
+            {{0.80f, 0.60f, 0.20f}, 0.02f, {1.0f,  0.9f,  0.5f}, 0.0f, {0,0,0}, 0.0f}, // 2: GoldMirror
+            {{0.0f,  0.0f,  0.0f }, 0.0f,  {0.04f, 0.04f, 0.04f},1.5f, {0,0,0}, 0.0f}, // 3: Glass (ior=1.5)
         };
         std::vector<GpuInstanceData> instance_data = {
-            {0, 0, {0, 0}},  // left   — AluminiumDull
-            {0, 1, {0, 0}},  // centre — MatteRed
-            {0, 2, {0, 0}},  // right  — GoldMirror
+            {0, 0, {0, 0}},  // instance 0 — left   bunny, AluminiumDull
+            {0, 1, {0, 0}},  // instance 1 — centre bunny, MatteRed
+            {0, 2, {0, 0}},  // instance 2 — right  bunny, GoldMirror
+            {1, 3, {0, 0}},  // instance 3 — glass box,    Glass
         };
         SceneData scene_data{ctx, mesh_refs, materials, instance_data};
 

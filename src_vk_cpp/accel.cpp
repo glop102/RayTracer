@@ -96,7 +96,7 @@ static void create_as(VkContext& ctx,
 // ---------------------------------------------------------------------------
 // BLAS build
 
-AccelStructure build_blas(VkContext& ctx, Mesh& mesh) {
+AccelStructure build_blas(VkContext& ctx, Mesh& mesh, bool opaque) {
     // Describe the triangle geometry from the mesh device buffers.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
     triangles.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
@@ -110,7 +110,7 @@ AccelStructure build_blas(VkContext& ctx, Mesh& mesh) {
     VkAccelerationStructureGeometryKHR geom{};
     geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.flags        = opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0u;
     geom.geometry.triangles = triangles;
 
     uint32_t prim_count = mesh.index_count / 3;
@@ -173,7 +173,7 @@ AccelStructure build_tlas(VkContext& ctx, const std::vector<TlasInstance>& insta
         std::memcpy(dst.transform.matrix, glm::value_ptr(T), sizeof(dst.transform.matrix));
         dst.instanceCustomIndex                    = src.custom_index & 0xFFFFFFu;
         dst.mask                                   = 0xFF;
-        dst.instanceShaderBindingTableRecordOffset = 0;
+        dst.instanceShaderBindingTableRecordOffset = src.sbt_record_offset;
         dst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         dst.accelerationStructureReference         = src.blas->address;
     }

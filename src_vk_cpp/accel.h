@@ -34,13 +34,15 @@ struct AccelStructure {
 };
 
 // Build a BLAS for a single triangle mesh.
-AccelStructure build_blas(VkContext& ctx, Mesh& mesh);
+// opaque=false disables VK_GEOMETRY_OPAQUE_BIT_KHR so any-hit shaders can fire.
+AccelStructure build_blas(VkContext& ctx, Mesh& mesh, bool opaque = true);
 
 // One entry in the TLAS instance list.
 struct TlasInstance {
     AccelStructure* blas;
-    glm::mat4       transform;    // object-to-world (column-major GLM convention)
-    uint32_t        custom_index; // gl_InstanceCustomIndexEXT (24-bit)
+    glm::mat4       transform;          // object-to-world (column-major GLM convention)
+    uint32_t        custom_index;       // gl_InstanceCustomIndexEXT (24-bit)
+    uint32_t        sbt_record_offset = 0; // selects the hit group (0=opaque, 1=glass)
 };
 
 // Build a TLAS containing the given set of instances.

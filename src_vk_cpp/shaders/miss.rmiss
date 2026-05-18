@@ -8,6 +8,7 @@ struct HitResult {
     vec3  specular;
     vec3  emissive;
     float roughness;
+    float ior;
     int   hit;
 };
 layout(location = 0) rayPayloadInEXT HitResult payload;

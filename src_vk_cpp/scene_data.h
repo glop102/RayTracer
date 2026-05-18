@@ -22,7 +22,7 @@ struct GpuMeshRef {
 // {vec3, float} packing avoids std430 padding between members.
 struct GpuMaterial {
     glm::vec3 diffuse;    float roughness;
-    glm::vec3 specular;   float _pad0;
+    glm::vec3 specular;   float ior;      // index of refraction; 0 = opaque
     glm::vec3 emissive;   float _pad1;
 };
 

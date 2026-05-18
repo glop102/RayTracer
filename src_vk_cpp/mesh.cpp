@@ -195,6 +195,54 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
     index_addr = vkGetBufferDeviceAddress(device, &addr_info);
 }
 
+Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
+    device    = ctx.device.device;
+    allocator = ctx.allocator;
+
+    // 6 faces × 4 vertices = 24 vertices; 6 faces × 2 triangles × 3 = 36 indices.
+    // Vertices have CCW winding when viewed from outside (outward face normals).
+    struct Face { glm::vec3 v[4]; glm::vec3 n; };
+    const Face faces[6] = {
+        {{{mx.x,mn.y,mn.z},{mx.x,mx.y,mn.z},{mx.x,mx.y,mx.z},{mx.x,mn.y,mx.z}}, { 1, 0, 0}},
+        {{{mn.x,mn.y,mx.z},{mn.x,mx.y,mx.z},{mn.x,mx.y,mn.z},{mn.x,mn.y,mn.z}}, {-1, 0, 0}},
+        {{{mn.x,mx.y,mx.z},{mx.x,mx.y,mx.z},{mx.x,mx.y,mn.z},{mn.x,mx.y,mn.z}}, { 0, 1, 0}},
+        {{{mn.x,mn.y,mn.z},{mx.x,mn.y,mn.z},{mx.x,mn.y,mx.z},{mn.x,mn.y,mx.z}}, { 0,-1, 0}},
+        {{{mn.x,mn.y,mx.z},{mx.x,mn.y,mx.z},{mx.x,mx.y,mx.z},{mn.x,mx.y,mx.z}}, { 0, 0, 1}},
+        {{{mx.x,mn.y,mn.z},{mn.x,mn.y,mn.z},{mn.x,mx.y,mn.z},{mx.x,mx.y,mn.z}}, { 0, 0,-1}},
+    };
+
+    std::vector<float>    vdata;
+    std::vector<uint32_t> inds;
+    vdata.reserve(24 * 6);
+    inds.reserve(36);
+
+    for (const auto& f : faces) {
+        auto base = static_cast<uint32_t>(vdata.size() / 6);
+        for (const auto& p : f.v) {
+            vdata.push_back(p.x); vdata.push_back(p.y); vdata.push_back(p.z);
+            vdata.push_back(f.n.x); vdata.push_back(f.n.y); vdata.push_back(f.n.z);
+        }
+        inds.push_back(base+0); inds.push_back(base+1); inds.push_back(base+2);
+        inds.push_back(base+0); inds.push_back(base+2); inds.push_back(base+3);
+    }
+
+    vertex_count = static_cast<uint32_t>(vdata.size() / 6);
+    index_count  = static_cast<uint32_t>(inds.size());
+
+    upload_buffer(ctx, VERTEX_USAGE, vdata.data(), vdata.size() * sizeof(float),
+                  vertex_buf, vertex_alloc);
+    upload_buffer(ctx, INDEX_USAGE,  inds.data(),  inds.size()  * sizeof(uint32_t),
+                  index_buf,  index_alloc);
+
+    VkBufferDeviceAddressInfo addr_info{};
+    addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addr_info.buffer = vertex_buf;
+    vertex_addr = vkGetBufferDeviceAddress(device, &addr_info);
+
+    addr_info.buffer = index_buf;
+    index_addr = vkGetBufferDeviceAddress(device, &addr_info);
+}
+
 Mesh::~Mesh() {
     vmaDestroyBuffer(allocator, vertex_buf, vertex_alloc);
     vmaDestroyBuffer(allocator, index_buf,  index_alloc);
