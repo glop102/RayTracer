@@ -4,5 +4,5 @@
 void main() {
     // Shadow rays (traced with SkipClosestHitShader) pass through glass unobstructed.
     if ((gl_IncomingRayFlagsEXT & gl_RayFlagsSkipClosestHitShaderEXT) != 0u)
-        ignoreIntersectionEXT();
+        ignoreIntersectionEXT;
 }
