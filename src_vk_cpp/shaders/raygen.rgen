@@ -56,6 +56,25 @@ vec3 rand_hemisphere(inout uint rng, vec3 n) {
     return normalize(st * cos(phi) * t + st * sin(phi) * b + ct * n);
 }
 
+// GGX Smith G1 (exact masking term for one direction).
+float ggx_G1(float NdotX, float alpha2) {
+    return 2.0 * NdotX / (NdotX + sqrt(alpha2 + (1.0 - alpha2) * NdotX * NdotX));
+}
+
+// Sample a GGX microfacet normal in the hemisphere of N; alpha = roughness^2.
+// Uses the standard spherical parameterisation: tan(theta) = alpha * sqrt(u/(1-u)).
+vec3 sample_ggx_H(inout uint rng, vec3 N, float alpha) {
+    float u1      = rand01(rng), u2 = rand01(rng);
+    float phi     = 6.28318530718 * u1;
+    float cos_th2 = (1.0 - u2) / (1.0 - u2 + u2 * alpha * alpha);
+    float cos_th  = sqrt(cos_th2);
+    float sin_th  = sqrt(max(0.0, 1.0 - cos_th2));
+    vec3  up      = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3  T       = normalize(cross(up, N));
+    vec3  B       = cross(N, T);
+    return normalize(sin_th * cos(phi) * T + sin_th * sin(phi) * B + cos_th * N);
+}
+
 // NEE: sample one light triangle and return a direct-lighting contribution.
 // Returns vec3(0) if the light is occluded or back-facing.
 vec3 sample_direct_light(inout uint rng, vec3 hit_pos, vec3 hit_normal, vec3 mat_color) {
@@ -180,21 +199,44 @@ void main() {
                 ray_origin = payload.position - n * 0.001;
             }
         } else {
-            // Opaque: NEE direct lighting sample + indirect scatter.
-            vec3 mat_color = mix(payload.specular, payload.diffuse, payload.roughness);
-
+            // Opaque: NEE direct lighting + GGX microfacet scatter.
             if (cam.num_light_tris > 0u)
-                color += throughput * sample_direct_light(rng, payload.position, payload.normal, mat_color);
+                color += throughput * sample_direct_light(rng, payload.position, payload.normal, payload.diffuse);
 
-            // Indirect: blend mirror reflect and cosine-hemisphere by roughness.
-            vec3 spec_dir   = reflect(ray_dir, payload.normal);
-            vec3 diff_dir   = rand_hemisphere(rng, payload.normal);
-            vec3 scatter    = normalize(mix(spec_dir, diff_dir, payload.roughness));
-            float cos_theta = max(dot(scatter, payload.normal), 0.0);
-            throughput     *= mat_color * cos_theta;
+            // Cook-Torrance GGX specular + Lambertian diffuse, selected by Fresnel.
+            float alpha  = max(payload.roughness * payload.roughness, 0.001);
+            float alpha2 = alpha * alpha;
+            vec3  V      = -ray_dir;
+            float NdotV  = max(dot(payload.normal, V), 1e-4);
+
+            // Sample GGX half-vector and evaluate Schlick Fresnel at (H, V).
+            vec3  H     = sample_ggx_H(rng, payload.normal, alpha);
+            float NdotH = max(dot(payload.normal, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            vec3  F     = payload.specular + (1.0 - payload.specular) * pow(1.0 - HdotV, 5.0);
+            float F_avg = dot(F, vec3(1.0 / 3.0));  // selection probability
+
+            if (rand01(rng) < F_avg) {
+                // Specular GGX path: L = reflect(−V, H).
+                vec3  L     = reflect(-V, H);
+                float NdotL = dot(payload.normal, L);
+                float HdotL = max(dot(H, L), 0.0);
+                if (NdotL <= 0.0) break;
+
+                // weight = f_r * NdotL / p(L)  where p(L) = D*NdotH / (4*HdotL)
+                //        = G * F * HdotL / (NdotV * NdotH)
+                // Divided by selection probability F_avg.
+                float G = ggx_G1(NdotL, alpha2) * ggx_G1(NdotV, alpha2);
+                throughput *= G * F * HdotL / max(NdotV * NdotH * F_avg, 1e-6);
+                ray_dir    = L;
+            } else {
+                // Lambertian diffuse path: f_r = diffuse/π, pdf = NdotL/π → weight = diffuse.
+                // Divided by selection probability (1 − F_avg).
+                throughput *= payload.diffuse / max(1.0 - F_avg, 1e-6);
+                ray_dir    = rand_hemisphere(rng, payload.normal);
+            }
 
             ray_origin = payload.position + payload.normal * 0.001;
-            ray_dir    = scatter;
         }
 
         // Russian roulette after 3 bounces.

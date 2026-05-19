@@ -192,16 +192,19 @@ ordered by noise-reduction-per-effort.
      MIS (Multiple Importance Sampling) balances NEE and BRDF samples to handle
      both large and small lights well; add it after NEE is working.
 
-  2. GGX microfacet BRDF
-     The current scatter is a linear blend between mirror-reflect and cosine-
-     hemisphere. Real specular lobes follow the GGX (Trowbridge-Reitz) normal
-     distribution — sharper highlights, correct energy conservation, plausible
-     look for metals and dielectrics. Replace the mix() scatter with:
-       - sample a GGX half-vector H given roughness α = roughness²
-       - reflect ray_dir about H to get scatter direction
-       - weight throughput by the full Cook-Torrance term (D·G·F / 4·NdotL·NdotV)
-     The math is ~30 lines of GLSL but must be derived carefully; pbrt-v4 chapter
-     9 is the reference.
+  2. [DONE] GGX microfacet BRDF
+     Replaced the mix(spec_dir, diff_dir, roughness) scatter with Cook-Torrance
+     GGX + Fresnel-weighted Lambertian diffuse. Implementation in raygen.rgen:
+       - ggx_G1(NdotX, alpha2): exact Smith G1 for GGX masking term.
+       - sample_ggx_H(rng, N, alpha): samples half-vector from GGX NDF using
+         cos²θ = (1−u) / (1−u + u·α²) (spherical inversion method).
+       - Schlick Fresnel F(H,V) using specular color as F0.
+       - Stochastic branch: rand < F_avg → specular GGX; else → Lambertian.
+       - Specular weight: G·F·HdotL / (NdotV·NdotH·F_avg).
+         Derived from f_r/p(L) where p(L) = D·NdotH / (4·HdotL).
+       - Diffuse weight: diffuse / (1 − F_avg).
+     NEE direct-light estimator left as Lambertian (diffuse only); specular
+     direct lighting is captured stochastically by the GGX scatter.
 
   3. [DONE] Beer–Lambert absorption for glass
      GpuMaterial gained a fourth row: vec3 absorption + float _pad2 (64 bytes
