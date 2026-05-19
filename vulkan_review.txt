@@ -1,0 +1,156 @@
+Code Review: src_vk_cpp Ray Tracer
+====================================
+
+Overall the code is genuinely clean — good RAII discipline, move-only types where it matters,
+sensible module boundaries, and clear comments where the Vulkan spec has unintuitive requirements.
+The suggestions below are about patterns that will hurt as the scene/material system grows, not
+cosmetic complaints.
+
+
+1. [DONE 89efc60] Shared GLSL hit shader header
+------------------------------------------------
+Extracted shaders/hit_common.glsl containing all shared declarations
+(FloatBuf/UintBuf buffer refs, MeshRef/GpuMaterial/InstanceData structs,
+SSBO bindings 2-4, HitResult, bary, and fetch_world_normal()). Both hit
+shaders reduced to #include + main(). ShaderIncluder added to
+shader_compiler.h to resolve #include relative to the shader directory.
+
+
+2+3. [DONE c7e9b57] Unified device buffer upload and address helpers
+---------------------------------------------------------------------
+Added upload_device_buffer() and buffer_device_address() to gpu_buffer.h/cpp.
+accel.cpp's static buffer_address() removed; the 36-line hand-rolled staging
+block in build_tlas replaced with one upload_device_buffer() call (pipeline
+barrier dropped — vkQueueWaitIdle inside end_one_shot is sufficient). mesh.cpp's
+static upload_buffer() removed; Mesh now stores GpuBuffer vertex_buf/index_buf
+instead of loose buf+alloc pairs; private resolve_addresses() eliminates the
+duplicated VkBufferDeviceAddressInfo block at the end of both constructors.
+
+
+4. [DONE 218ea51] Delete dead Camera UBO code; replace orbit with first-person control
+--------------------------------------------------------------------------------------
+Camera rewritten as a pure C++ struct with no Vulkan dependency. All UBO/descriptor
+infrastructure removed (~60 lines). Orbit state (theta/phi/radius/target) replaced by
+FPS state (pos/yaw/pitch). Controls: click to capture mouse, ESC to release; WASD
+moves along camera axes; E/Q move world-up/down; mouse drag updates yaw/pitch.
+tick(float dt) polls GLFW key state each frame; main.cpp tracks wall-clock dt via
+glfwGetTime(). Starting position (0, 0.2, 0.8) looking toward -Z frames the scene.
+
+
+5. [SUPERSEDED by #4] Camera::rt_push() and Camera::update() both compute eye position
+--------------------------------------------------------------------------------------
+Both methods and the spherical coordinate duplication were eliminated when the orbit
+camera was replaced with the FPS camera (commit 218ea51). rt_push() now derives forward
+from yaw/pitch; update() is gone entirely.
+
+
+6+10. [DONE 77a3d1c] Auto-extract NEE light list from emissive instances
+-------------------------------------------------------------------------
+Mesh now retains cpu_positions/cpu_indices after GPU upload.
+extract_light_triangles() (scene_data.h/cpp) scans all SceneInstances for
+non-zero emissive materials and collects world-space triangles automatically.
+main.cpp's hand-coded lv0/lv1/lv2/lv3/emit block removed; the GpuMaterial
+emissive field is now the single source of truth. All triangles of emissive
+meshes are included — back-facing ones return zero via the shader's
+cos_theta_l check, which generalises correctly to arbitrary scene geometry.
+
+
+7. Shader stage setup is repetitive in rt_pipeline.cpp
+--------------------------------------------------------
+File: rt_pipeline.cpp:32-61
+
+Six consecutive blocks of:
+    stages[N].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[N].stage  = VK_SHADER_STAGE_...;
+    stages[N].module = ...;
+    stages[N].pName  = "main";
+
+A one-liner helper eliminates this and makes the stage list scannable:
+
+    static VkPipelineShaderStageCreateInfo make_stage(VkShaderStageFlagBits s, VkShaderModule m) {
+        return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, s, m, "main"};
+    }
+    // then:
+    VkPipelineShaderStageCreateInfo stages[] = {
+        make_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR,       rgen_mod),
+        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,          rmiss_mod),
+        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,          shadow_miss_mod),
+        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,  rchit_mod),
+        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,  glass_chit_mod),
+        make_stage(VK_SHADER_STAGE_ANY_HIT_BIT_KHR,       glass_ahit_mod),
+    };
+
+
+8. SBT construction will become hard to maintain with more hit groups
+----------------------------------------------------------------------
+File: rt_pipeline.cpp:149-205
+
+The SBT is currently laid out by computing raw byte offsets manually. The group count (5), offset
+arithmetic, and memcpy indices are all coupled. Adding a third hit group (e.g. for a subsurface
+material) means touching five different places and hoping the counts stay consistent.
+
+A lightweight helper struct would isolate the alignment math:
+
+    struct SbtRegion { uint32_t offset; uint32_t count; };
+
+    struct SbtLayout {
+        uint32_t handle_stride;
+        SbtRegion raygen, miss, hit;
+        uint32_t total_size;
+
+        SbtLayout(const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& props,
+                  uint32_t miss_count, uint32_t hit_count);
+        void write(uint8_t* dst, const uint8_t* handles, uint32_t handle_size) const;
+        void fill_regions(VkDeviceAddress base,
+                          VkStridedDeviceAddressRegionKHR& raygen_out,
+                          VkStridedDeviceAddressRegionKHR& miss_out,
+                          VkStridedDeviceAddressRegionKHR& hit_out) const;
+    };
+
+This makes the group count explicit and self-documenting, and the loop in write() replaces the
+five separate memcpy calls.
+
+
+9. GpuBuffer requires manual lifetime management
+-------------------------------------------------
+File: gpu_buffer.h:8-12
+
+GpuBuffer is a plain struct — the caller must call destroy_buffer() or it leaks. SceneData handles
+this correctly, but any future code that forgets (or throws before reaching the destroy) will leak.
+Compare with Mesh and AccelStructure which both carry their own device/allocator and clean up in
+their destructors.
+
+The tension is that RtOutput stores std::vector<GpuBuffer> as non-owning references (ssbos_ in
+rt_output.h:38 — SceneData owns the memory, RtOutput just reads it). So GpuBuffer can't be made
+unconditionally owning without a plan for the borrow case.
+
+One clean option: introduce a GpuBufferRef (just buf + size, no alloc) for the non-owning case,
+and make GpuBuffer RAII with a destructor. The RtOutput::ssbos_ member becomes
+std::vector<GpuBufferRef>. This separates "I own this memory" from "I have a view into someone
+else's memory."
+
+
+10. Emissive color is defined in two places
+--------------------------------------------
+File: main.cpp:111 (in materials array), main.cpp:130 (emit variable)
+
+The area light's emission values {4.0f, 3.5f, 2.5f} appear in the GpuMaterial array and again in
+the GpuLightTriangle construction. If you change the light intensity in the material, the NEE
+samples silently use the old value. A simple named constant at the top of main() would at least
+make them share a definition, even before a more principled "scan emissive materials to build
+light list" approach.
+
+
+Summary Priority
+----------------
+DONE    #1  Shared GLSL hit shader header (hit_common.glsl) — 89efc60
+DONE    #2+3 Unified device-local buffer upload in gpu_buffer — c7e9b57
+DONE    #4  Delete dead Camera UBO; replace orbit with FPS controls — 218ea51
+DONE    #5  (superseded by #4 — orbit math gone entirely)
+DONE    #6+10 Auto-extract NEE light list from emissive instances — 77a3d1c
+Medium  #8  SBT layout helper struct
+Low     #7  make_stage helper for shader stage setup
+Low     #9  GpuBufferRef split for owned vs borrowed buffers
+DONE    #10 (absorbed into #6 — single emissive source of truth via GpuMaterial)
+
+The GLSL duplication (#1) is the highest risk because it grows with every new material type added.
