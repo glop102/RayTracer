@@ -159,6 +159,57 @@ Glass (second SBT hit group, sbt_record_offset = 1):
     verified outward with cross-product check at construction time.
 
 
+STAGE 4: Rendering Quality
+--------------------------
+The path tracer is correct but slow to converge. These improvements are roughly
+ordered by noise-reduction-per-effort.
+
+  1. Emissive materials + Next Event Estimation (NEE)
+     Currently the only light source is the sky. NEE adds a direct-lighting
+     sample at every bounce: trace a shadow ray toward a randomly chosen light,
+     weight by solid angle, add to the estimate without waiting for a path to
+     accidentally hit it. Variance drops dramatically for scenes with small
+     lights. Requires:
+       - emissive field already in GpuMaterial (used now only for sky miss)
+       - shadow ray: traceRayEXT with gl_RayFlagsSkipClosestHitShaderEXT |
+         gl_RayFlagsTerminateOnFirstHitEXT; miss = light visible
+       - glass any-hit already wired to pass shadow rays through (ignoreIntersectionEXT)
+       - a light list SSBO so the raygen can sample a random emissive triangle
+     MIS (Multiple Importance Sampling) balances NEE and BRDF samples to handle
+     both large and small lights well; add it after NEE is working.
+
+  2. GGX microfacet BRDF
+     The current scatter is a linear blend between mirror-reflect and cosine-
+     hemisphere. Real specular lobes follow the GGX (Trowbridge-Reitz) normal
+     distribution — sharper highlights, correct energy conservation, plausible
+     look for metals and dielectrics. Replace the mix() scatter with:
+       - sample a GGX half-vector H given roughness α = roughness²
+       - reflect ray_dir about H to get scatter direction
+       - weight throughput by the full Cook-Torrance term (D·G·F / 4·NdotL·NdotV)
+     The math is ~30 lines of GLSL but must be derived carefully; pbrt-v4 chapter
+     9 is the reference.
+
+  3. Beer–Lambert absorption for glass
+     One-line change in the glass refraction path:
+       throughput *= exp(-absorption_color * gl_HitTEXT);
+     Add absorption_color to GpuMaterial (reuse _pad1). Gives colored glass and
+     makes thick vs thin glass visually distinct.
+
+  4. Textures
+     Bind a VkImageView array (VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER with
+     variable descriptor count) to the descriptor set. Add texture_index fields
+     to GpuMaterial for diffuse/roughness/normal maps. The closest-hit shader
+     reads UV coordinates from the vertex buffer (extend stride from 6 to 8
+     floats: add u, v) and samples the appropriate texture. Normal maps require
+     a TBN matrix from tangent/bitangent computed from UVs.
+
+  5. GLTF scene loading
+     Replace the hard-coded bunny + box with a GLTF 2.0 loader (tinygltf is
+     header-only). Each GLTF mesh becomes a BLAS; each node becomes a TLAS
+     instance with the node's world transform. Material properties map directly
+     to GpuMaterial fields. This is mostly plumbing but unlocks arbitrary scenes.
+
+
 ARCHITECTURE THAT CARRIES OVER UNCHANGED
 -----------------------------------------
   - SAH BVH construction: irrelevant — driver builds it from triangle data.
