@@ -85,47 +85,78 @@ New concepts vs rasterization:
     Array of VkAccelerationStructureInstanceKHR, each with a 4x3 row-major
     transform and a BLAS reference. This is exactly the Instance model.
   - Shader Binding Table (SBT): maps geometry to shader groups.
-    One entry per material type (BRD, glass, emissive, ...).
+    One entry per material type (opaque, glass, emissive, ...).
 
-Milestone: shoot a ray from a hard-coded camera, return the barycentric
+Milestone: [DONE] shoot a ray from a hard-coded camera, return the barycentric
 coordinates of the first hit as a color. No shading, no BVH code, just
 confirm the pipeline is wired up.
+
+Key implementation notes:
+  - shaderInt64 is a Vulkan 1.0 core feature in VkPhysicalDeviceFeatures, NOT
+    VkPhysicalDeviceVulkan12Features. Must enable via VkPhysicalDeviceFeatures2
+    in the DeviceBuilder pNext chain (leave pEnabledFeatures NULL).
+  - SBT buffer base address must satisfy shaderGroupBaseAlignment (typically 64
+    bytes). VMA suballocation may not satisfy this — use vmaCreateBufferWithAlignment.
+  - GLM mat4 is column-major; VkTransformMatrixKHR is row-major 3×4. Transpose
+    the GLM mat4 and memcpy the first 12 floats to get the right layout.
+  - Nix flake builds from git-tracked files only. New files must be `git add`ed
+    before `nix build` or they are silently invisible to the build system.
 
 
 STAGE 3: Translate the Path Tracer
 -----------------------------------
-Once the RT pipeline is confirmed working, translate the CPU logic to shaders.
+[DONE] Full path tracer translation with multi-material scene and glass.
 
-Shader stage mapping:
+Shader stage mapping (implemented):
   CPU                             GPU (GLSL)
   --------------------------------+------------------------------------------
-  Camera::_cast_ray_for_color()  | raygen shader (ray generation)
-  BRDMaterial::scatter()         | closest-hit shader (one per material type)
-  PureTransparentMaterial        | closest-hit shader (separate shader group)
+  Camera::_cast_ray_for_color()  | raygen shader — iterative bounce loop
+  BRDMaterial::scatter()         | closest-hit shader (opaque hit group)
+  PureTransparentMaterial        | closest-hit + any-hit (glass hit group)
   Skybox::color()                | miss shader
   Triangle intersection          | built-in (no intersection shader needed)
   TriangleBVH8                   | BLAS (driver-managed)
   BVH8List / Instance            | TLAS + instance transforms
 
-Things that need restructuring:
-  - Bounce loop: _cast_ray_for_color uses a while loop. GPU options:
-      a) traceRayEXT() recursion in the raygen shader (simple, depth-limited,
-         loses GPU coherence quickly past ~4 bounces)
-      b) Wavefront: raygen fills a ray buffer, closest-hit writes bounce rays
-         to another buffer, dispatch again. Better throughput for deep paths.
-    Start with (a) since it's a direct translation. Move to (b) if needed.
-  - Virtual dispatch: replace with a materialID stored per-triangle in the BLAS
-    geometry data. Closest-hit shaders are selected via the SBT, not vtable.
-  - RNG: each pixel needs its own state. Store a PCG32 seed in a storage image
-    or push constant seeded by (pixel_x * width + pixel_y + frame * prime).
-  - Accumulation: render to a float RGBA storage image, average with prior
-    frames using a running mean (current * (n-1)/n + new/n) or keep a
-    separate sample count buffer.
+Bounce loop: chose option (a) — iterative traceRayEXT() loop in raygen (10
+bounces max), Russian roulette termination after bounce 3. Not recursive —
+maxPipelineRayRecursionDepth = 1.
 
-Material data layout:
-  Define a GPU-side struct matching BRDMaterial fields (diffuse, specular,
-  emissive, roughness). Pack into a SSBO (shader storage buffer) indexed by
-  materialID. PureTransparentMaterial gets its own SSBO with refractive_index.
+RNG: PCG32 seeded per pixel per frame: seed = (y*width + x) ^ (frame * prime),
+two warm-up steps. All random samples drawn inline from one state uint.
+
+Accumulation: RGBA32F storage image, running mean via mix(prev, new, 1/(n+1)).
+Blit to B8G8R8A8_SRGB swapchain image — Vulkan applies sRGB gamma on blit.
+frame_index resets to 0 on camera move or window resize.
+
+Vertex buffer layout: interleaved {x,y,z, nx,ny,nz} — 6 floats (24 bytes) per
+vertex. BLAS geometry reads only positions (vertexStride=24); closest-hit shader
+reads normals at offset +3 via GL_EXT_buffer_reference device address access.
+
+Smooth normals: area-weighted accumulation (cross product magnitude = 2×area),
+then normalize. Smoother than angle-weighted for meshes with variable triangle
+sizes. Barycentric interpolation in the closest-hit shader.
+
+Multi-material/multi-instance scene:
+  - SceneData owns three SSBOs: mesh_refs (vertex+index addresses), materials
+    (diffuse/specular/emissive/roughness/ior), instances (mesh_idx + mat_idx).
+  - gl_InstanceCustomIndexEXT indexes into instances[], which fans out to the
+    correct mesh ref and material for that TLAS instance.
+
+Glass (second SBT hit group, sbt_record_offset = 1):
+  - BLAS built without VK_GEOMETRY_OPAQUE_BIT_KHR so any-hit can fire.
+  - glass_closest_hit.rchit: same vertex/normal lookup; stores outward-facing
+    normal (no back-face flip); sets payload.ior = +mat.ior (entering) or
+    -mat.ior (exiting) based on gl_HitKindEXT.
+  - glass_any_hit.rahit: calls ignoreIntersectionEXT (a statement, not a
+    function — no parentheses) when ray has SkipClosestHitShader flag, making
+    glass transparent to future shadow rays.
+  - raygen traces with flags=0u (per-BLAS opacity respected) rather than
+    gl_RayFlagsOpaqueEXT so the any-hit shader can fire for glass geometry.
+  - Glass scatter in raygen: Schlick Fresnel + GLSL refract() builtin, with
+    TIR detected by dot(refracted, refracted) < 0.001 → fallback to reflect.
+  - Box mesh: 24 vertices (4 per face, face normals), 36 indices, CCW winding
+    verified outward with cross-product check at construction time.
 
 
 ARCHITECTURE THAT CARRIES OVER UNCHANGED
