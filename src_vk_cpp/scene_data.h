@@ -1,5 +1,6 @@
 #pragma once
 #include "gpu_buffer.h"
+#include "mesh.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -42,6 +43,21 @@ struct GpuLightTriangle {
     glm::vec3 v2;       float _pad2;
     glm::vec3 emission; float _pad3;
 };
+
+// Resolved per-instance data used for light extraction (and future scene loaders).
+struct SceneInstance {
+    glm::mat4 transform;
+    uint32_t  mesh_index;
+    uint32_t  material_index;
+};
+
+// Scan all instances for non-zero emissive materials and collect their
+// world-space triangles into a NEE light list. Back-facing triangles are
+// included — the shader's cos_theta_l check discards them without bias.
+std::vector<GpuLightTriangle> extract_light_triangles(
+    const std::vector<SceneInstance>& instances,
+    const std::vector<const Mesh*>&   meshes,
+    const std::vector<GpuMaterial>&   materials);
 
 // Owns the SSBOs the shaders read to resolve per-hit data and sample lights.
 struct SceneData {

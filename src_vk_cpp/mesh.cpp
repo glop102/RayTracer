@@ -136,10 +136,12 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
         vdata.push_back(normals[i].x); vdata.push_back(normals[i].y); vdata.push_back(normals[i].z);
     }
 
-    vertex_buf = upload_device_buffer(ctx, VERTEX_USAGE,
-                                      vdata.data(), vdata.size() * sizeof(float));
-    index_buf  = upload_device_buffer(ctx, INDEX_USAGE,
-                                      inds.data(),  inds.size()  * sizeof(uint32_t));
+    vertex_buf    = upload_device_buffer(ctx, VERTEX_USAGE,
+                                          vdata.data(), vdata.size() * sizeof(float));
+    index_buf     = upload_device_buffer(ctx, INDEX_USAGE,
+                                          inds.data(),  inds.size()  * sizeof(uint32_t));
+    cpu_positions = std::move(verts);
+    cpu_indices   = std::move(inds);
     resolve_addresses();
 }
 
@@ -181,6 +183,13 @@ Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
                                       vdata.data(), vdata.size() * sizeof(float));
     index_buf  = upload_device_buffer(ctx, INDEX_USAGE,
                                       inds.data(),  inds.size()  * sizeof(uint32_t));
+
+    // Retain positions (not the interleaved normals) for light extraction.
+    cpu_positions.reserve(vertex_count);
+    for (const auto& f : faces)
+        for (const auto& p : f.v)
+            cpu_positions.push_back(p);
+    cpu_indices = std::move(inds);
     resolve_addresses();
 }
 

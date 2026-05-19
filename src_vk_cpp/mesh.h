@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct VkContext;
 
@@ -15,6 +16,10 @@ struct Mesh {
     uint32_t  index_count  = 0;
     VkDeviceAddress vertex_addr = 0;  // for BLAS geometry input
     VkDeviceAddress index_addr  = 0;
+
+    // CPU-side geometry retained after upload for light triangle extraction.
+    std::vector<glm::vec3> cpu_positions;
+    std::vector<uint32_t>  cpu_indices;
 
     Mesh(VkContext& ctx, const std::string& ply_path);
     Mesh(VkContext& ctx, glm::vec3 min_pt, glm::vec3 max_pt); // axis-aligned box (6 faces, face normals)

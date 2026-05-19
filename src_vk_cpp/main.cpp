@@ -66,9 +66,8 @@ int main() {
         Mesh box  {ctx, glm::vec3{-0.55f, -0.03f, -0.20f},
                         glm::vec3{ 0.55f,  0.22f,  0.20f}};
         // Area light: flat box above the scene, bottom face illuminates downward.
-        const glm::vec3 light_mn{-0.4f, 0.33f, -0.25f};
-        const glm::vec3 light_mx{ 0.4f, 0.35f,  0.25f};
-        Mesh light{ctx, light_mn, light_mx};
+        Mesh light{ctx, glm::vec3{-0.4f, 0.33f, -0.25f},
+                        glm::vec3{ 0.4f, 0.35f,  0.25f}};
         // Floor: large flat slab. Top face (y=-0.04) sits 1cm below the glass box
         // bottom (y=-0.03) to avoid coplanar surface ambiguity.
         Mesh floor{ctx, glm::vec3{-2.0f, -0.06f, -1.5f},
@@ -120,18 +119,18 @@ int main() {
             {3, 5, {0, 0}},  // instance 5 — floor,        Floor
         };
 
-        // Pre-bake the two downward-facing triangles of the light's bottom face for NEE.
-        // Bottom face (y = light_mn.y, normal (0,-1,0)) vertices from the box constructor:
-        //   face 3: {mn, {mx.x,mn.y,mn.z}, {mx.x,mn.y,mx.z}, {mn.x,mn.y,mx.z}}
-        const glm::vec3 lv0 = light_mn;
-        const glm::vec3 lv1 = {light_mx.x, light_mn.y, light_mn.z};
-        const glm::vec3 lv2 = {light_mx.x, light_mn.y, light_mx.z};
-        const glm::vec3 lv3 = {light_mn.x, light_mn.y, light_mx.z};
-        const glm::vec3 emit = {4.0f, 3.5f, 2.5f};
-        std::vector<GpuLightTriangle> light_triangles = {
-            {lv0, 0.0f, lv1, 0.0f, lv2, 0.0f, emit, 0.0f},
-            {lv0, 0.0f, lv2, 0.0f, lv3, 0.0f, emit, 0.0f},
-        };
+        // Build the NEE light list by scanning all instances for emissive materials.
+        // meshes_by_index must match the mesh_index values in instance_data.
+        std::vector<SceneInstance> scene_instances;
+        scene_instances.reserve(tlas_instances.size());
+        for (size_t i = 0; i < tlas_instances.size(); i++) {
+            uint32_t iid = tlas_instances[i].custom_index;
+            scene_instances.push_back({tlas_instances[i].transform,
+                                       instance_data[iid].mesh_index,
+                                       instance_data[iid].material_index});
+        }
+        const std::vector<const Mesh*> meshes_by_index = {&mesh, &box, &light, &floor};
+        auto light_triangles = extract_light_triangles(scene_instances, meshes_by_index, materials);
 
         SceneData scene_data{ctx, mesh_refs, materials, instance_data, light_triangles};
 
