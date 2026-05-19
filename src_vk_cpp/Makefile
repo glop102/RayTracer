@@ -30,6 +30,7 @@ install:
 	install -Dm644 shaders/closest_hit.rchit         $(DESTDIR)/share/raytracer_vk/shaders/closest_hit.rchit
 	install -Dm644 shaders/glass_closest_hit.rchit   $(DESTDIR)/share/raytracer_vk/shaders/glass_closest_hit.rchit
 	install -Dm644 shaders/glass_any_hit.rahit        $(DESTDIR)/share/raytracer_vk/shaders/glass_any_hit.rahit
+	install -Dm644 shaders/hit_common.glsl            $(DESTDIR)/share/raytracer_vk/shaders/hit_common.glsl
 
 clean:
 	rm -f $(OBJS) $(TARGET)

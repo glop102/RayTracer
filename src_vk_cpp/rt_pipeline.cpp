@@ -14,12 +14,12 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
     // ------------------------------------------------------------------ Shaders
     auto shader_dir = find_shader_dir();
 
-    auto rgen_spv        = compile_glsl(read_file(shader_dir / "raygen.rgen"),            "raygen.rgen",            shaderc_raygen_shader);
-    auto rmiss_spv       = compile_glsl(read_file(shader_dir / "miss.rmiss"),             "miss.rmiss",             shaderc_miss_shader);
-    auto shadow_miss_spv = compile_glsl(read_file(shader_dir / "shadow_miss.rmiss"),      "shadow_miss.rmiss",      shaderc_miss_shader);
-    auto rchit_spv       = compile_glsl(read_file(shader_dir / "closest_hit.rchit"),      "closest_hit.rchit",      shaderc_closesthit_shader);
-    auto glass_chit_spv  = compile_glsl(read_file(shader_dir / "glass_closest_hit.rchit"),"glass_closest_hit.rchit",shaderc_closesthit_shader);
-    auto glass_ahit_spv  = compile_glsl(read_file(shader_dir / "glass_any_hit.rahit"),    "glass_any_hit.rahit",    shaderc_anyhit_shader);
+    auto rgen_spv        = compile_glsl(read_file(shader_dir / "raygen.rgen"),            "raygen.rgen",            shaderc_raygen_shader,       shader_dir);
+    auto rmiss_spv       = compile_glsl(read_file(shader_dir / "miss.rmiss"),             "miss.rmiss",             shaderc_miss_shader,         shader_dir);
+    auto shadow_miss_spv = compile_glsl(read_file(shader_dir / "shadow_miss.rmiss"),      "shadow_miss.rmiss",      shaderc_miss_shader,         shader_dir);
+    auto rchit_spv       = compile_glsl(read_file(shader_dir / "closest_hit.rchit"),      "closest_hit.rchit",      shaderc_closesthit_shader,   shader_dir);
+    auto glass_chit_spv  = compile_glsl(read_file(shader_dir / "glass_closest_hit.rchit"),"glass_closest_hit.rchit",shaderc_closesthit_shader,   shader_dir);
+    auto glass_ahit_spv  = compile_glsl(read_file(shader_dir / "glass_any_hit.rahit"),    "glass_any_hit.rahit",    shaderc_anyhit_shader,       shader_dir);
 
     VkShaderModule rgen_mod        = make_module(device, rgen_spv);
     VkShaderModule rmiss_mod       = make_module(device, rmiss_spv);
