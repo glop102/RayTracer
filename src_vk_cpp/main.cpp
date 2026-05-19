@@ -69,10 +69,15 @@ int main() {
         const glm::vec3 light_mn{-0.4f, 0.33f, -0.25f};
         const glm::vec3 light_mx{ 0.4f, 0.35f,  0.25f};
         Mesh light{ctx, light_mn, light_mx};
+        // Floor: large flat slab. Top face (y=-0.04) sits 1cm below the glass box
+        // bottom (y=-0.03) to avoid coplanar surface ambiguity.
+        Mesh floor{ctx, glm::vec3{-2.0f, -0.06f, -1.5f},
+                        glm::vec3{ 2.0f, -0.04f,  1.5f}};
 
         AccelStructure blas       = build_blas(ctx, mesh);
         AccelStructure glass_blas = build_blas(ctx, box, false); // non-opaque for any-hit
         AccelStructure light_blas = build_blas(ctx, light);
+        AccelStructure floor_blas = build_blas(ctx, floor);
 
         // Three bunnies side by side, each with a different material.
         // Glass box surrounds them (hit group 1). Area light sits above.
@@ -87,6 +92,7 @@ int main() {
             {&blas,       translate( 0.35f, 0.0f, 0.0f), 2, 0}, // right  — opaque
             {&glass_blas, glm::mat4(1.0f),               3, 1}, // glass box — hit group 1
             {&light_blas, glm::mat4(1.0f),               4, 0}, // area light — opaque emissive
+            {&floor_blas, glm::mat4(1.0f),               5, 0}, // floor — opaque diffuse
         };
         AccelStructure tlas = build_tlas(ctx, tlas_instances);
 
@@ -94,6 +100,7 @@ int main() {
             {mesh.vertex_addr,  mesh.index_addr },  // mesh 0: bunny
             {box.vertex_addr,   box.index_addr  },  // mesh 1: glass box
             {light.vertex_addr, light.index_addr},  // mesh 2: area light
+            {floor.vertex_addr, floor.index_addr},  // mesh 3: floor
         };
         std::vector<GpuMaterial> materials = {
             // diffuse              roughness  specular              ior   emissive          _pad1  absorption        _pad2
@@ -102,6 +109,7 @@ int main() {
             {{0.80f,0.60f,0.20f}, 0.02f, {1.0f, 0.9f, 0.5f},  0.0f, {0.0f,0.0f,0.0f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 2: GoldMirror
             {{0.0f, 0.0f, 0.0f }, 0.0f,  {0.04f,0.04f,0.04f}, 1.5f, {0.0f,0.0f,0.0f}, 0.0f, {0.8f,0.2f,0.6f}, 0.0f}, // 3: Glass (teal tint)
             {{0.0f, 0.0f, 0.0f }, 1.0f,  {0.0f, 0.0f, 0.0f},  0.0f, {4.0f,3.5f,2.5f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 4: AreaLight
+            {{0.6f, 0.6f, 0.58f}, 1.0f,  {0.0f, 0.0f, 0.0f},  0.0f, {0.0f,0.0f,0.0f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 5: Floor (pale concrete)
         };
         std::vector<GpuInstanceData> instance_data = {
             {0, 0, {0, 0}},  // instance 0 — left   bunny, AluminiumDull
@@ -109,6 +117,7 @@ int main() {
             {0, 2, {0, 0}},  // instance 2 — right  bunny, GoldMirror
             {1, 3, {0, 0}},  // instance 3 — glass box,    Glass
             {2, 4, {0, 0}},  // instance 4 — area light,   AreaLight
+            {3, 5, {0, 0}},  // instance 5 — floor,        Floor
         };
 
         // Pre-bake the two downward-facing triangles of the light's bottom face for NEE.
