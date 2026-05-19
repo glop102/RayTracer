@@ -1,17 +1,17 @@
 #pragma once
+#include "gpu_buffer.h"
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
+#include <span>
+#include <vector>
 
 struct VkContext;
-struct SceneData;
 
-// Owns the RGBA32F storage image for path-trace accumulation, plus the
-// descriptor pool and set that binds:
-//   binding 0: TLAS
-//   binding 1: storage image (RGBA32F, read-modify-write for running mean)
-//   binding 2: vertex SSBO  (for face normal lookup in closest-hit)
-//   binding 3: index  SSBO
-// Must be recreated on swapchain resize; vertex/index buffers are stable.
+// Owns the RGBA32F accumulation image plus the descriptor pool/set that binds:
+//   binding 0        : TLAS               (raygen)
+//   binding 1        : storage image      (raygen)
+//   binding 2 .. 2+N : SSBOs from caller  (raygen | closest-hit)
+// Must be recreated on swapchain resize; SSBOs are stable across resizes.
 struct RtOutput {
     VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool      descriptor_pool       = VK_NULL_HANDLE;
@@ -22,7 +22,7 @@ struct RtOutput {
     VkImageView   view  = VK_NULL_HANDLE;
 
     RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
-             const SceneData& scene);
+             std::span<const GpuBuffer> ssbos);
     ~RtOutput();
 
     // Recreate the storage image for a new extent and rebind all descriptors.
@@ -35,14 +35,7 @@ private:
     VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
 
-    VkBuffer     mesh_refs_buf        = VK_NULL_HANDLE;
-    VkDeviceSize mesh_refs_range      = 0;
-    VkBuffer     materials_buf        = VK_NULL_HANDLE;
-    VkDeviceSize materials_range      = 0;
-    VkBuffer     instances_buf        = VK_NULL_HANDLE;
-    VkDeviceSize instances_range      = 0;
-    VkBuffer     light_triangles_buf  = VK_NULL_HANDLE;
-    VkDeviceSize light_triangles_range= 0;
+    std::vector<GpuBuffer> ssbos_;  // non-owning handles; SceneData owns the memory
 
     void create_image(VkContext& ctx, VkExtent2D extent);
     void destroy_image();

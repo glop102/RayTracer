@@ -1,34 +1,23 @@
 #include "rt_output.h"
-#include "scene_data.h"
 #include "vk_context.h"
 
 #include <stdexcept>
+#include <vector>
 
-// RGBA32F for HDR path-trace accumulation (running mean, linear space).
-// The blit to the SRGB swapchain applies the sRGB transfer function.
 static constexpr VkFormat STORAGE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
 
 RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
-                   const SceneData& scene) {
-    device         = ctx.device.device;
-    allocator      = ctx.allocator;
-    mesh_refs_buf        = scene.mesh_refs_buf;
-    mesh_refs_range      = scene.mesh_refs_range;
-    materials_buf        = scene.materials_buf;
-    materials_range      = scene.materials_range;
-    instances_buf        = scene.instances_buf;
-    instances_range      = scene.instances_range;
-    light_triangles_buf  = scene.light_triangles_buf;
-    light_triangles_range= scene.light_triangles_range;
+                   std::span<const GpuBuffer> ssbos) {
+    device    = ctx.device.device;
+    allocator = ctx.allocator;
+    ssbos_    = {ssbos.begin(), ssbos.end()};
 
     // ------------------------------------------------------------------ Descriptor set layout
-    // binding 0: TLAS                  — raygen
-    // binding 1: storage image         — raygen (RGBA32F running-mean accumulation)
-    // binding 2: mesh_refs SSBO        — closest-hit
-    // binding 3: materials SSBO        — closest-hit
-    // binding 4: instances SSBO        — closest-hit
-    // binding 5: light_triangles SSBO  — raygen (NEE light sampling)
-    VkDescriptorSetLayoutBinding bindings[6]{};
+    // binding 0        : TLAS (raygen)
+    // binding 1        : storage image (raygen)
+    // binding 2 .. 2+N : one SSBO per entry in ssbos (raygen | closest-hit)
+    std::vector<VkDescriptorSetLayoutBinding> bindings(2 + ssbos_.size());
+
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
@@ -39,30 +28,18 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    bindings[2].binding         = 2;
-    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-
-    bindings[3].binding         = 3;
-    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-
-    bindings[4].binding         = 4;
-    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-
-    bindings[5].binding         = 5;
-    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    for (uint32_t i = 0; i < ssbos_.size(); i++) {
+        bindings[2 + i].binding         = 2 + i;
+        bindings[2 + i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[2 + i].descriptorCount = 1;
+        bindings[2 + i].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+                                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    }
 
     VkDescriptorSetLayoutCreateInfo layout_ci{};
     layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_ci.bindingCount = 6;
-    layout_ci.pBindings    = bindings;
+    layout_ci.bindingCount = static_cast<uint32_t>(bindings.size());
+    layout_ci.pBindings    = bindings.data();
     if (vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &descriptor_set_layout) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor set layout creation failed");
 
@@ -73,7 +50,7 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     pool_sizes[1].descriptorCount = 1;
     pool_sizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    pool_sizes[2].descriptorCount = 4;  // mesh_refs + materials + instances + light_triangles
+    pool_sizes[2].descriptorCount = static_cast<uint32_t>(ssbos_.size());
 
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -137,7 +114,6 @@ void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
     if (vkCreateImageView(device, &view_ci, nullptr, &view) != VK_SUCCESS)
         throw std::runtime_error("RT storage image view creation failed");
 
-    // Transition from UNDEFINED to GENERAL so the raygen shader can write.
     VkCommandBuffer cmd = ctx.begin_one_shot();
 
     VkImageMemoryBarrier barrier{};
@@ -164,73 +140,52 @@ void RtOutput::destroy_image() {
 }
 
 void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
+    std::vector<VkWriteDescriptorSet> writes;
+    writes.reserve(2 + ssbos_.size());
+
     // Binding 0: TLAS
     VkWriteDescriptorSetAccelerationStructureKHR as_write{};
     as_write.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
     as_write.accelerationStructureCount = 1;
     as_write.pAccelerationStructures    = &tlas;
 
-    VkWriteDescriptorSet write0{};
-    write0.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write0.pNext           = &as_write;
-    write0.dstSet          = descriptor_set;
-    write0.dstBinding      = 0;
-    write0.descriptorCount = 1;
-    write0.descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    VkWriteDescriptorSet w0{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    w0.pNext           = &as_write;
+    w0.dstSet          = descriptor_set;
+    w0.dstBinding      = 0;
+    w0.descriptorCount = 1;
+    w0.descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writes.push_back(w0);
 
     // Binding 1: storage image
     VkDescriptorImageInfo img_info{};
     img_info.imageView   = view;
     img_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet write1{};
-    write1.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write1.dstSet          = descriptor_set;
-    write1.dstBinding      = 1;
-    write1.descriptorCount = 1;
-    write1.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    write1.pImageInfo      = &img_info;
+    VkWriteDescriptorSet w1{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    w1.dstSet          = descriptor_set;
+    w1.dstBinding      = 1;
+    w1.descriptorCount = 1;
+    w1.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w1.pImageInfo      = &img_info;
+    writes.push_back(w1);
 
-    // Binding 2: mesh_refs SSBO
-    VkDescriptorBufferInfo mesh_refs_info{mesh_refs_buf, 0, mesh_refs_range};
-    VkWriteDescriptorSet write2{};
-    write2.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write2.dstSet          = descriptor_set;
-    write2.dstBinding      = 2;
-    write2.descriptorCount = 1;
-    write2.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write2.pBufferInfo     = &mesh_refs_info;
+    // Bindings 2+: SSBOs — buf_infos must outlive the loop that builds writes.
+    std::vector<VkDescriptorBufferInfo> buf_infos;
+    buf_infos.reserve(ssbos_.size());
+    for (const auto& s : ssbos_)
+        buf_infos.push_back({s.buf, 0, s.size});
 
-    // Binding 3: materials SSBO
-    VkDescriptorBufferInfo materials_info{materials_buf, 0, materials_range};
-    VkWriteDescriptorSet write3{};
-    write3.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write3.dstSet          = descriptor_set;
-    write3.dstBinding      = 3;
-    write3.descriptorCount = 1;
-    write3.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write3.pBufferInfo     = &materials_info;
+    for (uint32_t i = 0; i < ssbos_.size(); i++) {
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet          = descriptor_set;
+        w.dstBinding      = 2 + i;
+        w.descriptorCount = 1;
+        w.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        w.pBufferInfo     = &buf_infos[i];
+        writes.push_back(w);
+    }
 
-    // Binding 4: instances SSBO
-    VkDescriptorBufferInfo instances_info{instances_buf, 0, instances_range};
-    VkWriteDescriptorSet write4{};
-    write4.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write4.dstSet          = descriptor_set;
-    write4.dstBinding      = 4;
-    write4.descriptorCount = 1;
-    write4.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write4.pBufferInfo     = &instances_info;
-
-    // Binding 5: light_triangles SSBO
-    VkDescriptorBufferInfo light_triangles_info{light_triangles_buf, 0, light_triangles_range};
-    VkWriteDescriptorSet write5{};
-    write5.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write5.dstSet          = descriptor_set;
-    write5.dstBinding      = 5;
-    write5.descriptorCount = 1;
-    write5.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write5.pBufferInfo     = &light_triangles_info;
-
-    VkWriteDescriptorSet writes[6] = {write0, write1, write2, write3, write4, write5};
-    vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device,
+        static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }

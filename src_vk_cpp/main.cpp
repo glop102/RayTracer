@@ -126,7 +126,15 @@ int main() {
 
         SceneData scene_data{ctx, mesh_refs, materials, instance_data, light_triangles};
 
-        RtOutput   rt_output  {ctx, swapchain.extent, tlas.handle, scene_data};
+        // SSBOs listed in binding order (2, 3, 4, 5 …).
+        // Add new SSBOs here; RtOutput wires up bindings automatically.
+        const GpuBuffer ssbos[] = {
+            scene_data.mesh_refs,
+            scene_data.materials,
+            scene_data.instances,
+            scene_data.light_triangles,
+        };
+        RtOutput rt_output{ctx, swapchain.extent, tlas.handle, ssbos};
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
 
         uint32_t frame_index = 0;

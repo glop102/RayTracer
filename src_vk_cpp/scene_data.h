@@ -1,6 +1,5 @@
 #pragma once
-#include <vk_mem_alloc.h>
-#include <vulkan/vulkan.h>
+#include "gpu_buffer.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -44,35 +43,24 @@ struct GpuLightTriangle {
     glm::vec3 emission; float _pad3;
 };
 
-// Owns the four SSBOs the shaders read to resolve per-hit data and sample lights.
-// These never change after construction (static scene description).
+// Owns the SSBOs the shaders read to resolve per-hit data and sample lights.
 struct SceneData {
-    VkBuffer     mesh_refs_buf        = VK_NULL_HANDLE;
-    VkDeviceSize mesh_refs_range      = 0;
-    VkBuffer     materials_buf        = VK_NULL_HANDLE;
-    VkDeviceSize materials_range      = 0;
-    VkBuffer     instances_buf        = VK_NULL_HANDLE;
-    VkDeviceSize instances_range      = 0;
-    VkBuffer     light_triangles_buf  = VK_NULL_HANDLE;
-    VkDeviceSize light_triangles_range= 0;
-    uint32_t     light_count          = 0;
+    GpuBuffer mesh_refs;
+    GpuBuffer materials;
+    GpuBuffer instances;
+    GpuBuffer light_triangles;
+    uint32_t  light_count = 0;
 
     SceneData(VkContext& ctx,
-              const std::vector<GpuMeshRef>&        mesh_refs,
-              const std::vector<GpuMaterial>&       materials,
-              const std::vector<GpuInstanceData>&   instances,
-              const std::vector<GpuLightTriangle>&  light_triangles);
+              const std::vector<GpuMeshRef>&       mesh_refs,
+              const std::vector<GpuMaterial>&      materials,
+              const std::vector<GpuInstanceData>&  instances,
+              const std::vector<GpuLightTriangle>& light_triangles);
     ~SceneData();
 
     SceneData(const SceneData&)            = delete;
     SceneData& operator=(const SceneData&) = delete;
 
 private:
-    VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
-
-    VmaAllocation mesh_refs_alloc       = {};
-    VmaAllocation materials_alloc       = {};
-    VmaAllocation instances_alloc       = {};
-    VmaAllocation light_triangles_alloc = {};
 };
