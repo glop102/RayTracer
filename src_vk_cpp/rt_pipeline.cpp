@@ -28,37 +28,21 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
     VkShaderModule glass_chit_mod  = make_module(device, glass_chit_spv);
     VkShaderModule glass_ahit_mod  = make_module(device, glass_ahit_spv);
 
+    auto make_stage = [](VkShaderStageFlagBits stage, VkShaderModule mod) {
+        return VkPipelineShaderStageCreateInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            nullptr, 0, stage, mod, "main", nullptr};
+    };
+
     // Stage indices: 0=rgen, 1=miss, 2=shadow_miss, 3=opaque_chit, 4=glass_chit, 5=glass_ahit
-    VkPipelineShaderStageCreateInfo stages[6]{};
-    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    stages[0].module = rgen_mod;
-    stages[0].pName  = "main";
-
-    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
-    stages[1].module = rmiss_mod;
-    stages[1].pName  = "main";
-
-    stages[2].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[2].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
-    stages[2].module = shadow_miss_mod;
-    stages[2].pName  = "main";
-
-    stages[3].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[3].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    stages[3].module = rchit_mod;
-    stages[3].pName  = "main";
-
-    stages[4].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[4].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    stages[4].module = glass_chit_mod;
-    stages[4].pName  = "main";
-
-    stages[5].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[5].stage  = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-    stages[5].module = glass_ahit_mod;
-    stages[5].pName  = "main";
+    VkPipelineShaderStageCreateInfo stages[] = {
+        make_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR,      rgen_mod),
+        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,        rmiss_mod),
+        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,        shadow_miss_mod),
+        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, rchit_mod),
+        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, glass_chit_mod),
+        make_stage(VK_SHADER_STAGE_ANY_HIT_BIT_KHR,     glass_ahit_mod),
+    };
 
     // ------------------------------------------------------------------ Shader groups
     // Group 0: raygen      (general, stage 0)
@@ -120,9 +104,9 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
     // ------------------------------------------------------------------ RT pipeline
     VkRayTracingPipelineCreateInfoKHR pipe_ci{};
     pipe_ci.sType                        = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    pipe_ci.stageCount                   = 6;
+    pipe_ci.stageCount                   = static_cast<uint32_t>(std::size(stages));
     pipe_ci.pStages                      = stages;
-    pipe_ci.groupCount                   = 5;
+    pipe_ci.groupCount                   = static_cast<uint32_t>(std::size(groups));
     pipe_ci.pGroups                      = groups;
     pipe_ci.maxPipelineRayRecursionDepth = 1;  // no recursive bounces for the milestone
     pipe_ci.layout                       = layout;
@@ -146,16 +130,20 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
     auto align_up = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handle_stride = align_up(handle_size, handle_align);
 
-    // Regions: raygen (group 0), miss (groups 1+2 — scene then shadow), hit (groups 3+4 — opaque then glass).
+    // One entry per region; update these when adding miss or hit shaders.
+    constexpr uint32_t MISS_COUNT = 2;  // scene miss, shadow miss
+    constexpr uint32_t HIT_COUNT  = 2;  // opaque, glass
+
+    // Regions: raygen (group 0), miss (groups 1..MISS_COUNT), hit (remaining groups).
     uint32_t raygen_offset = 0;
     uint32_t miss_offset   = align_up(handle_stride, base_align);
-    uint32_t hit_offset    = align_up(miss_offset + 2 * handle_stride, base_align);
-    uint32_t sbt_size      = hit_offset + 2 * handle_stride;  // two hit groups
+    uint32_t hit_offset    = align_up(miss_offset + MISS_COUNT * handle_stride, base_align);
+    uint32_t sbt_size      = hit_offset + HIT_COUNT * handle_stride;
 
-    // Fetch all five handles (rgen, miss, shadow_miss, opaque_hit, glass_hit).
-    std::vector<uint8_t> handles(5 * handle_size);
+    uint32_t group_count = static_cast<uint32_t>(std::size(groups));
+    std::vector<uint8_t> handles(group_count * handle_size);
     if (ctx.pfn_vkGetRayTracingShaderGroupHandlesKHR(device, pipeline,
-                                                     0, 5, handles.size(), handles.data()) != VK_SUCCESS)
+                                                     0, group_count, handles.size(), handles.data()) != VK_SUCCESS)
         throw std::runtime_error("vkGetRayTracingShaderGroupHandlesKHR failed");
 
     // Host-visible SBT buffer (handles are written by the CPU).
@@ -178,12 +166,17 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
                                      &sbt_buf, &sbt_alloc, &sbt_alloc_info) != VK_SUCCESS)
         throw std::runtime_error("SBT buffer creation failed");
 
+    // Copy handles in group order: raygen region, then miss region, then hit region.
     auto* data = static_cast<uint8_t*>(sbt_alloc_info.pMappedData);
-    std::memcpy(data + raygen_offset,                  handles.data() + 0 * handle_size, handle_size);
-    std::memcpy(data + miss_offset,                    handles.data() + 1 * handle_size, handle_size); // scene miss
-    std::memcpy(data + miss_offset + handle_stride,    handles.data() + 2 * handle_size, handle_size); // shadow miss
-    std::memcpy(data + hit_offset,                     handles.data() + 3 * handle_size, handle_size); // opaque
-    std::memcpy(data + hit_offset + handle_stride,     handles.data() + 4 * handle_size, handle_size); // glass
+    struct { uint32_t base; uint32_t count; } regions[] = {
+        {raygen_offset, 1},
+        {miss_offset,   MISS_COUNT},
+        {hit_offset,    HIT_COUNT},
+    };
+    uint32_t g = 0;
+    for (auto [base, count] : regions)
+        for (uint32_t i = 0; i < count; i++, g++)
+            std::memcpy(data + base + i * handle_stride, handles.data() + g * handle_size, handle_size);
     vmaFlushAllocation(ctx.allocator, sbt_alloc, 0, VK_WHOLE_SIZE);
 
     VkBufferDeviceAddressInfo addr_info{};
@@ -197,11 +190,11 @@ RtPipeline::RtPipeline(VkContext& ctx, VkDescriptorSetLayout rt_output_layout) {
 
     miss_region.deviceAddress = sbt_addr + miss_offset;
     miss_region.stride        = handle_stride;
-    miss_region.size          = 2 * handle_stride;  // scene miss + shadow miss
+    miss_region.size          = MISS_COUNT * handle_stride;
 
     hit_region.deviceAddress = sbt_addr + hit_offset;
     hit_region.stride        = handle_stride;
-    hit_region.size          = 2 * handle_stride;  // opaque + glass (hit groups 3,4)
+    hit_region.size          = HIT_COUNT * handle_stride;
     // callable_region stays zero (no callable shaders)
 }
 
