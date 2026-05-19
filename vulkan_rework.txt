@@ -164,17 +164,25 @@ STAGE 4: Rendering Quality
 The path tracer is correct but slow to converge. These improvements are roughly
 ordered by noise-reduction-per-effort.
 
-  1. Emissive materials + Next Event Estimation (NEE)
-     Currently the only light source is the sky. NEE adds a direct-lighting
-     sample at every bounce: trace a shadow ray toward a randomly chosen light,
-     weight by solid angle, add to the estimate without waiting for a path to
-     accidentally hit it. Variance drops dramatically for scenes with small
-     lights. Requires:
-       - emissive field already in GpuMaterial (used now only for sky miss)
-       - shadow ray: traceRayEXT with gl_RayFlagsSkipClosestHitShaderEXT |
-         gl_RayFlagsTerminateOnFirstHitEXT; miss = light visible
-       - glass any-hit already wired to pass shadow rays through (ignoreIntersectionEXT)
-       - a light list SSBO so the raygen can sample a random emissive triangle
+  1. [DONE] Emissive materials + Next Event Estimation (NEE)
+     GpuLightTriangle SSBO (binding 5, raygen-visible): world-space v0/v1/v2 +
+     emission, 4×vec4 = 64 bytes each, populated on the CPU for all downward-
+     facing triangles of emissive meshes (2 triangles from the area light's
+     bottom face). A warm-white area light (4.0, 3.5, 2.5) sits at y=0.33–0.35
+     above the scene as a fifth TLAS instance with its own opaque BLAS.
+
+     Shadow ray: payload location 1 (int shadow_hit), shadow_miss.rmiss sets it
+     to 0 on miss. Traced with gl_RayFlagsSkipClosestHitShaderEXT |
+     gl_RayFlagsTerminateOnFirstHitEXT, missIndex=1. Glass any-hit already
+     passes shadow rays through (ignoreIntersectionEXT on SkipClosestHitShader).
+
+     NEE estimator (Lambertian, area sampling):
+       contribution = emission × (mat_color/π) × cos_θ_surface
+                      × N_lights × area_i × cos_θ_light / dist²
+     Called at every opaque bounce; glass bounces skipped. shadow_miss.rmiss
+     added as a second miss shader (missIndex 1); SBT miss region extended to
+     2×handle_stride. push constant gained num_light_tris (replaces one _pad).
+
      MIS (Multiple Importance Sampling) balances NEE and BRDF samples to handle
      both large and small lights well; add it after NEE is working.
 
@@ -189,11 +197,18 @@ ordered by noise-reduction-per-effort.
      The math is ~30 lines of GLSL but must be derived carefully; pbrt-v4 chapter
      9 is the reference.
 
-  3. Beer–Lambert absorption for glass
-     One-line change in the glass refraction path:
-       throughput *= exp(-absorption_color * gl_HitTEXT);
-     Add absorption_color to GpuMaterial (reuse _pad1). Gives colored glass and
-     makes thick vs thin glass visually distinct.
+  3. [DONE] Beer–Lambert absorption for glass
+     GpuMaterial gained a fourth row: vec3 absorption + float _pad2 (64 bytes
+     total). absorption is a per-channel Beer-Lambert coefficient (1/unit-length);
+     zero means no absorption. HitResult payload gained vec3 absorption; filled
+     by glass_closest_hit.rchit from mat.absorption.
+
+     Applied in raygen on glass EXIT only (entering segment length is unknown
+     until exit). Distance is computed from the pre-update ray_origin to
+     payload.position before ray_origin is overwritten:
+       throughput *= exp(-payload.absorption * length(payload.position - ray_origin));
+     Skipped entirely when absorption == vec3(0). The demo glass box uses
+     absorption = {0.8, 0.2, 0.6} giving a teal tint that deepens with thickness.
 
   4. Textures
      Bind a VkImageView array (VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER with

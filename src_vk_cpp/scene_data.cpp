@@ -24,23 +24,28 @@ static void upload_ssbo(VkContext& ctx,
 }
 
 SceneData::SceneData(VkContext& ctx,
-                     const std::vector<GpuMeshRef>&      mesh_refs,
-                     const std::vector<GpuMaterial>&     materials,
-                     const std::vector<GpuInstanceData>& instances) {
+                     const std::vector<GpuMeshRef>&       mesh_refs,
+                     const std::vector<GpuMaterial>&      materials,
+                     const std::vector<GpuInstanceData>&  instances,
+                     const std::vector<GpuLightTriangle>& light_triangles) {
     device    = ctx.device.device;
     allocator = ctx.allocator;
 
-    mesh_refs_range  = mesh_refs.size()  * sizeof(GpuMeshRef);
-    materials_range  = materials.size()  * sizeof(GpuMaterial);
-    instances_range  = instances.size()  * sizeof(GpuInstanceData);
+    mesh_refs_range       = mesh_refs.size()       * sizeof(GpuMeshRef);
+    materials_range       = materials.size()        * sizeof(GpuMaterial);
+    instances_range       = instances.size()        * sizeof(GpuInstanceData);
+    light_triangles_range = light_triangles.size()  * sizeof(GpuLightTriangle);
+    light_count           = static_cast<uint32_t>(light_triangles.size());
 
-    upload_ssbo(ctx, mesh_refs.data(),  mesh_refs_range,  mesh_refs_buf,  mesh_refs_alloc);
-    upload_ssbo(ctx, materials.data(),  materials_range,  materials_buf,  materials_alloc);
-    upload_ssbo(ctx, instances.data(),  instances_range,  instances_buf,  instances_alloc);
+    upload_ssbo(ctx, mesh_refs.data(),       mesh_refs_range,       mesh_refs_buf,       mesh_refs_alloc);
+    upload_ssbo(ctx, materials.data(),       materials_range,       materials_buf,       materials_alloc);
+    upload_ssbo(ctx, instances.data(),       instances_range,       instances_buf,       instances_alloc);
+    upload_ssbo(ctx, light_triangles.data(), light_triangles_range, light_triangles_buf, light_triangles_alloc);
 }
 
 SceneData::~SceneData() {
-    vmaDestroyBuffer(allocator, mesh_refs_buf,  mesh_refs_alloc);
-    vmaDestroyBuffer(allocator, materials_buf,  materials_alloc);
-    vmaDestroyBuffer(allocator, instances_buf,  instances_alloc);
+    vmaDestroyBuffer(allocator, mesh_refs_buf,       mesh_refs_alloc);
+    vmaDestroyBuffer(allocator, materials_buf,       materials_alloc);
+    vmaDestroyBuffer(allocator, instances_buf,       instances_alloc);
+    vmaDestroyBuffer(allocator, light_triangles_buf, light_triangles_alloc);
 }

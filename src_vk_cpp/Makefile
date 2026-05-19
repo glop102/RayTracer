@@ -26,6 +26,7 @@ install:
 	install -Dm644 shaders/triangle.frag      $(DESTDIR)/share/raytracer_vk/shaders/triangle.frag
 	install -Dm644 shaders/raygen.rgen        $(DESTDIR)/share/raytracer_vk/shaders/raygen.rgen
 	install -Dm644 shaders/miss.rmiss         $(DESTDIR)/share/raytracer_vk/shaders/miss.rmiss
+	install -Dm644 shaders/shadow_miss.rmiss  $(DESTDIR)/share/raytracer_vk/shaders/shadow_miss.rmiss
 	install -Dm644 shaders/closest_hit.rchit         $(DESTDIR)/share/raytracer_vk/shaders/closest_hit.rchit
 	install -Dm644 shaders/glass_closest_hit.rchit   $(DESTDIR)/share/raytracer_vk/shaders/glass_closest_hit.rchit
 	install -Dm644 shaders/glass_any_hit.rahit        $(DESTDIR)/share/raytracer_vk/shaders/glass_any_hit.rahit

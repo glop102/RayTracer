@@ -8,7 +8,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Flo
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer UintBuf  { uint  d[]; };
 
 struct MeshRef     { uint64_t vertex_addr; uint64_t index_addr; };
-struct GpuMaterial { vec3 diffuse; float roughness; vec3 specular; float ior; vec3 emissive; float _pad1; };
+struct GpuMaterial { vec3 diffuse; float roughness; vec3 specular; float ior; vec3 emissive; float _pad1; vec3 absorption; float _pad2; };
 struct InstanceData { uint mesh_idx; uint mat_idx; uint _pad[2]; };
 
 layout(set = 0, binding = 2, std430) readonly buffer MeshRefs  { MeshRef     d[]; } mesh_refs;
@@ -21,6 +21,7 @@ struct HitResult {
     vec3  diffuse;
     vec3  specular;
     vec3  emissive;
+    vec3  absorption;
     float roughness;
     float ior;
     int   hit;
@@ -56,12 +57,13 @@ void main() {
     if (gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT)
         world_normal = -world_normal;
 
-    payload.hit       = 1;
-    payload.position  = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-    payload.normal    = world_normal;
-    payload.diffuse   = mat.diffuse;
-    payload.specular  = mat.specular;
-    payload.emissive  = mat.emissive;
-    payload.roughness = mat.roughness;
-    payload.ior       = 0.0;
+    payload.hit        = 1;
+    payload.position   = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+    payload.normal     = world_normal;
+    payload.diffuse    = mat.diffuse;
+    payload.specular   = mat.specular;
+    payload.emissive   = mat.emissive;
+    payload.absorption = vec3(0.0);
+    payload.roughness  = mat.roughness;
+    payload.ior        = 0.0;
 }

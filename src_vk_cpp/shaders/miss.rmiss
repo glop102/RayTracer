@@ -7,6 +7,7 @@ struct HitResult {
     vec3  diffuse;
     vec3  specular;
     vec3  emissive;
+    vec3  absorption;
     float roughness;
     float ior;
     int   hit;

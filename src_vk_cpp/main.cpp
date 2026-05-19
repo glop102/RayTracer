@@ -62,15 +62,20 @@ int main() {
         Camera    camera{ctx};
         app.camera = &camera;
         FrameSync frame_sync{ctx, static_cast<uint32_t>(swapchain.images.size())};
-        Mesh mesh{ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
-        Mesh box {ctx, glm::vec3{-0.55f, -0.03f, -0.20f},
-                       glm::vec3{ 0.55f,  0.22f,  0.20f}};
+        Mesh mesh {ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
+        Mesh box  {ctx, glm::vec3{-0.55f, -0.03f, -0.20f},
+                        glm::vec3{ 0.55f,  0.22f,  0.20f}};
+        // Area light: flat box above the scene, bottom face illuminates downward.
+        const glm::vec3 light_mn{-0.4f, 0.33f, -0.25f};
+        const glm::vec3 light_mx{ 0.4f, 0.35f,  0.25f};
+        Mesh light{ctx, light_mn, light_mx};
 
-        AccelStructure blas      = build_blas(ctx, mesh);
-        AccelStructure glass_blas= build_blas(ctx, box, false); // non-opaque for any-hit
+        AccelStructure blas       = build_blas(ctx, mesh);
+        AccelStructure glass_blas = build_blas(ctx, box, false); // non-opaque for any-hit
+        AccelStructure light_blas = build_blas(ctx, light);
 
         // Three bunnies side by side, each with a different material.
-        // Glass box surrounds them (hit group 1).
+        // Glass box surrounds them (hit group 1). Area light sits above.
         auto translate = [](float tx, float ty, float tz) {
             glm::mat4 m(1.0f);
             m[3] = glm::vec4(tx, ty, tz, 1.0f);
@@ -81,27 +86,45 @@ int main() {
             {&blas,       glm::mat4(1.0f),               1, 0}, // centre — opaque
             {&blas,       translate( 0.35f, 0.0f, 0.0f), 2, 0}, // right  — opaque
             {&glass_blas, glm::mat4(1.0f),               3, 1}, // glass box — hit group 1
+            {&light_blas, glm::mat4(1.0f),               4, 0}, // area light — opaque emissive
         };
         AccelStructure tlas = build_tlas(ctx, tlas_instances);
 
         std::vector<GpuMeshRef> mesh_refs = {
-            {mesh.vertex_addr, mesh.index_addr},  // mesh 0: bunny
-            {box.vertex_addr,  box.index_addr },  // mesh 1: glass box
+            {mesh.vertex_addr,  mesh.index_addr },  // mesh 0: bunny
+            {box.vertex_addr,   box.index_addr  },  // mesh 1: glass box
+            {light.vertex_addr, light.index_addr},  // mesh 2: area light
         };
         std::vector<GpuMaterial> materials = {
-            // diffuse              roughness  specular              ior   emissive  _pad1
-            {{0.75f, 0.75f, 0.75f}, 0.15f, {0.9f,  0.9f,  0.9f}, 0.0f, {0,0,0}, 0.0f}, // 0: AluminiumDull
-            {{0.80f, 0.15f, 0.10f}, 0.92f, {0.5f,  0.5f,  0.5f}, 0.0f, {0,0,0}, 0.0f}, // 1: MatteRed
-            {{0.80f, 0.60f, 0.20f}, 0.02f, {1.0f,  0.9f,  0.5f}, 0.0f, {0,0,0}, 0.0f}, // 2: GoldMirror
-            {{0.0f,  0.0f,  0.0f }, 0.0f,  {0.04f, 0.04f, 0.04f},1.5f, {0,0,0}, 0.0f}, // 3: Glass (ior=1.5)
+            // diffuse              roughness  specular              ior   emissive          _pad1  absorption        _pad2
+            {{0.75f,0.75f,0.75f}, 0.15f, {0.9f, 0.9f, 0.9f},  0.0f, {0.0f,0.0f,0.0f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 0: AluminiumDull
+            {{0.80f,0.15f,0.10f}, 0.92f, {0.5f, 0.5f, 0.5f},  0.0f, {0.0f,0.0f,0.0f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 1: MatteRed
+            {{0.80f,0.60f,0.20f}, 0.02f, {1.0f, 0.9f, 0.5f},  0.0f, {0.0f,0.0f,0.0f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 2: GoldMirror
+            {{0.0f, 0.0f, 0.0f }, 0.0f,  {0.04f,0.04f,0.04f}, 1.5f, {0.0f,0.0f,0.0f}, 0.0f, {0.8f,0.2f,0.6f}, 0.0f}, // 3: Glass (teal tint)
+            {{0.0f, 0.0f, 0.0f }, 1.0f,  {0.0f, 0.0f, 0.0f},  0.0f, {4.0f,3.5f,2.5f}, 0.0f, {0.0f,0.0f,0.0f}, 0.0f}, // 4: AreaLight
         };
         std::vector<GpuInstanceData> instance_data = {
             {0, 0, {0, 0}},  // instance 0 — left   bunny, AluminiumDull
             {0, 1, {0, 0}},  // instance 1 — centre bunny, MatteRed
             {0, 2, {0, 0}},  // instance 2 — right  bunny, GoldMirror
             {1, 3, {0, 0}},  // instance 3 — glass box,    Glass
+            {2, 4, {0, 0}},  // instance 4 — area light,   AreaLight
         };
-        SceneData scene_data{ctx, mesh_refs, materials, instance_data};
+
+        // Pre-bake the two downward-facing triangles of the light's bottom face for NEE.
+        // Bottom face (y = light_mn.y, normal (0,-1,0)) vertices from the box constructor:
+        //   face 3: {mn, {mx.x,mn.y,mn.z}, {mx.x,mn.y,mx.z}, {mn.x,mn.y,mx.z}}
+        const glm::vec3 lv0 = light_mn;
+        const glm::vec3 lv1 = {light_mx.x, light_mn.y, light_mn.z};
+        const glm::vec3 lv2 = {light_mx.x, light_mn.y, light_mx.z};
+        const glm::vec3 lv3 = {light_mn.x, light_mn.y, light_mx.z};
+        const glm::vec3 emit = {4.0f, 3.5f, 2.5f};
+        std::vector<GpuLightTriangle> light_triangles = {
+            {lv0, 0.0f, lv1, 0.0f, lv2, 0.0f, emit, 0.0f},
+            {lv0, 0.0f, lv2, 0.0f, lv3, 0.0f, emit, 0.0f},
+        };
+
+        SceneData scene_data{ctx, mesh_refs, materials, instance_data, light_triangles};
 
         RtOutput   rt_output  {ctx, swapchain.extent, tlas.handle, scene_data};
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
@@ -136,8 +159,9 @@ int main() {
             if (camera.consume_moved()) frame_index = 0;
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline.pipeline);
-            RtCameraPush push = camera.rt_push(swapchain.extent);
-            push.frame_index  = frame_index++;
+            RtCameraPush push      = camera.rt_push(swapchain.extent);
+            push.frame_index       = frame_index++;
+            push.num_light_tris    = scene_data.light_count;
             vkCmdPushConstants(cmd, rt_pipeline.layout,
                                VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(push), &push);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,

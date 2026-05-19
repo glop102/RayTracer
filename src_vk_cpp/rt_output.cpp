@@ -12,20 +12,23 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
                    const SceneData& scene) {
     device         = ctx.device.device;
     allocator      = ctx.allocator;
-    mesh_refs_buf  = scene.mesh_refs_buf;
-    mesh_refs_range= scene.mesh_refs_range;
-    materials_buf  = scene.materials_buf;
-    materials_range= scene.materials_range;
-    instances_buf  = scene.instances_buf;
-    instances_range= scene.instances_range;
+    mesh_refs_buf        = scene.mesh_refs_buf;
+    mesh_refs_range      = scene.mesh_refs_range;
+    materials_buf        = scene.materials_buf;
+    materials_range      = scene.materials_range;
+    instances_buf        = scene.instances_buf;
+    instances_range      = scene.instances_range;
+    light_triangles_buf  = scene.light_triangles_buf;
+    light_triangles_range= scene.light_triangles_range;
 
     // ------------------------------------------------------------------ Descriptor set layout
-    // binding 0: TLAS           — raygen
-    // binding 1: storage image  — raygen (RGBA32F running-mean accumulation)
-    // binding 2: mesh_refs SSBO — closest-hit
-    // binding 3: materials SSBO — closest-hit
-    // binding 4: instances SSBO — closest-hit
-    VkDescriptorSetLayoutBinding bindings[5]{};
+    // binding 0: TLAS                  — raygen
+    // binding 1: storage image         — raygen (RGBA32F running-mean accumulation)
+    // binding 2: mesh_refs SSBO        — closest-hit
+    // binding 3: materials SSBO        — closest-hit
+    // binding 4: instances SSBO        — closest-hit
+    // binding 5: light_triangles SSBO  — raygen (NEE light sampling)
+    VkDescriptorSetLayoutBinding bindings[6]{};
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
@@ -51,9 +54,14 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
+    bindings[5].binding         = 5;
+    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layout_ci{};
     layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_ci.bindingCount = 5;
+    layout_ci.bindingCount = 6;
     layout_ci.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &descriptor_set_layout) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor set layout creation failed");
@@ -65,7 +73,7 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     pool_sizes[1].descriptorCount = 1;
     pool_sizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    pool_sizes[2].descriptorCount = 3;  // mesh_refs + materials + instances
+    pool_sizes[2].descriptorCount = 4;  // mesh_refs + materials + instances + light_triangles
 
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -213,6 +221,16 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     write4.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write4.pBufferInfo     = &instances_info;
 
-    VkWriteDescriptorSet writes[5] = {write0, write1, write2, write3, write4};
-    vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
+    // Binding 5: light_triangles SSBO
+    VkDescriptorBufferInfo light_triangles_info{light_triangles_buf, 0, light_triangles_range};
+    VkWriteDescriptorSet write5{};
+    write5.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write5.dstSet          = descriptor_set;
+    write5.dstBinding      = 5;
+    write5.descriptorCount = 1;
+    write5.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write5.pBufferInfo     = &light_triangles_info;
+
+    VkWriteDescriptorSet writes[6] = {write0, write1, write2, write3, write4, write5};
+    vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
 }

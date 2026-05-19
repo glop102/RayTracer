@@ -14,8 +14,9 @@ struct RtCameraPush {
     glm::vec4 lower_left;   // xyz = lower-left corner of virtual screen at distance 1
     glm::vec4 horizontal;   // xyz = full horizontal span of virtual screen
     glm::vec4 vertical;     // xyz = full vertical span of virtual screen
-    uint32_t  frame_index;  // 0 = first frame with current camera; drives accumulation weight
-    float     _pad[3];
+    uint32_t  frame_index;     // 0 = first frame with current camera; drives accumulation weight
+    uint32_t  num_light_tris;  // number of emissive triangles in the light list SSBO
+    float     _pad[2];
 };
 
 // Owns the camera UBO, its descriptor set, and orbit input state.

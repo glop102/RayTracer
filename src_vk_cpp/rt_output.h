@@ -35,12 +35,14 @@ private:
     VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
 
-    VkBuffer     mesh_refs_buf   = VK_NULL_HANDLE;
-    VkDeviceSize mesh_refs_range = 0;
-    VkBuffer     materials_buf   = VK_NULL_HANDLE;
-    VkDeviceSize materials_range = 0;
-    VkBuffer     instances_buf   = VK_NULL_HANDLE;
-    VkDeviceSize instances_range = 0;
+    VkBuffer     mesh_refs_buf        = VK_NULL_HANDLE;
+    VkDeviceSize mesh_refs_range      = 0;
+    VkBuffer     materials_buf        = VK_NULL_HANDLE;
+    VkDeviceSize materials_range      = 0;
+    VkBuffer     instances_buf        = VK_NULL_HANDLE;
+    VkDeviceSize instances_range      = 0;
+    VkBuffer     light_triangles_buf  = VK_NULL_HANDLE;
+    VkDeviceSize light_triangles_range= 0;
 
     void create_image(VkContext& ctx, VkExtent2D extent);
     void destroy_image();
