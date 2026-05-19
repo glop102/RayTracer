@@ -55,60 +55,16 @@ meshes are included — back-facing ones return zero via the shader's
 cos_theta_l check, which generalises correctly to arbitrary scene geometry.
 
 
-7. Shader stage setup is repetitive in rt_pipeline.cpp
---------------------------------------------------------
-File: rt_pipeline.cpp:32-61
-
-Six consecutive blocks of:
-    stages[N].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[N].stage  = VK_SHADER_STAGE_...;
-    stages[N].module = ...;
-    stages[N].pName  = "main";
-
-A one-liner helper eliminates this and makes the stage list scannable:
-
-    static VkPipelineShaderStageCreateInfo make_stage(VkShaderStageFlagBits s, VkShaderModule m) {
-        return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, s, m, "main"};
-    }
-    // then:
-    VkPipelineShaderStageCreateInfo stages[] = {
-        make_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR,       rgen_mod),
-        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,          rmiss_mod),
-        make_stage(VK_SHADER_STAGE_MISS_BIT_KHR,          shadow_miss_mod),
-        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,  rchit_mod),
-        make_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,  glass_chit_mod),
-        make_stage(VK_SHADER_STAGE_ANY_HIT_BIT_KHR,       glass_ahit_mod),
-    };
-
-
-8. SBT construction will become hard to maintain with more hit groups
-----------------------------------------------------------------------
-File: rt_pipeline.cpp:149-205
-
-The SBT is currently laid out by computing raw byte offsets manually. The group count (5), offset
-arithmetic, and memcpy indices are all coupled. Adding a third hit group (e.g. for a subsurface
-material) means touching five different places and hoping the counts stay consistent.
-
-A lightweight helper struct would isolate the alignment math:
-
-    struct SbtRegion { uint32_t offset; uint32_t count; };
-
-    struct SbtLayout {
-        uint32_t handle_stride;
-        SbtRegion raygen, miss, hit;
-        uint32_t total_size;
-
-        SbtLayout(const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& props,
-                  uint32_t miss_count, uint32_t hit_count);
-        void write(uint8_t* dst, const uint8_t* handles, uint32_t handle_size) const;
-        void fill_regions(VkDeviceAddress base,
-                          VkStridedDeviceAddressRegionKHR& raygen_out,
-                          VkStridedDeviceAddressRegionKHR& miss_out,
-                          VkStridedDeviceAddressRegionKHR& hit_out) const;
-    };
-
-This makes the group count explicit and self-documenting, and the loop in write() replaces the
-five separate memcpy calls.
+7+8. [DONE c9d1263] make_stage helper + MISS/HIT_COUNT constants + handle loop
+------------------------------------------------------------------------------
+make_stage() lambda in rt_pipeline.cpp collapses each 4-line stage block to
+one line; stages[] is now a readable list. std::size(stages/groups) replaces
+magic 6/5 in pipe_ci. MISS_COUNT=2/HIT_COUNT=2 named constants drive all
+offset math and region sizes — updating either requires changing one number.
+Five individual memcpy calls replaced by a loop over {raygen,miss,hit}
+regions so adding a hit group only touches HIT_COUNT + the groups array.
+(Decided against SbtLayout helper struct — named constants + a loop solve
+all four coupling points without new infrastructure.)
 
 
 9. GpuBuffer requires manual lifetime management
@@ -148,8 +104,7 @@ DONE    #2+3 Unified device-local buffer upload in gpu_buffer — c7e9b57
 DONE    #4  Delete dead Camera UBO; replace orbit with FPS controls — 218ea51
 DONE    #5  (superseded by #4 — orbit math gone entirely)
 DONE    #6+10 Auto-extract NEE light list from emissive instances — 77a3d1c
-Medium  #8  SBT layout helper struct
-Low     #7  make_stage helper for shader stage setup
+DONE    #7+8 make_stage + MISS/HIT_COUNT constants + handle loop — c9d1263
 Low     #9  GpuBufferRef split for owned vs borrowed buffers
 DONE    #10 (absorbed into #6 — single emissive source of truth via GpuMaterial)
 
