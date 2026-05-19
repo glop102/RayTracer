@@ -1,5 +1,5 @@
 #pragma once
-#include <vk_mem_alloc.h>
+#include "gpu_buffer.h"
 #include <vulkan/vulkan.h>
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -9,12 +9,10 @@
 struct VkContext;
 
 struct Mesh {
-    VkBuffer      vertex_buf   = VK_NULL_HANDLE;
-    VkBuffer      index_buf    = VK_NULL_HANDLE;
-    VmaAllocation vertex_alloc = {};
-    VmaAllocation index_alloc  = {};
-    uint32_t      vertex_count = 0;
-    uint32_t      index_count  = 0;
+    GpuBuffer vertex_buf;
+    GpuBuffer index_buf;
+    uint32_t  vertex_count = 0;
+    uint32_t  index_count  = 0;
     VkDeviceAddress vertex_addr = 0;  // for BLAS geometry input
     VkDeviceAddress index_addr  = 0;
 
@@ -28,4 +26,6 @@ struct Mesh {
 private:
     VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
+
+    void resolve_addresses();
 };

@@ -1,4 +1,5 @@
 #include "mesh.h"
+#include "gpu_buffer.h"
 #include "vk_context.h"
 
 #include <glm/glm.hpp>
@@ -106,51 +107,9 @@ static constexpr VkBufferUsageFlags INDEX_USAGE =
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
-static void upload_buffer(VkContext& ctx,
-                          VkBufferUsageFlags usage,
-                          const void* data, VkDeviceSize size,
-                          VkBuffer& out_buf, VmaAllocation& out_alloc) {
-    // CPU-visible staging buffer
-    VkBufferCreateInfo stg_ci{};
-    stg_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    stg_ci.size  = size;
-    stg_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo stg_ai{};
-    stg_ai.usage = VMA_MEMORY_USAGE_AUTO;
-    stg_ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-
-    VkBuffer      stg_buf;
-    VmaAllocation stg_alloc;
-    if (vmaCreateBuffer(ctx.allocator, &stg_ci, &stg_ai,
-                        &stg_buf, &stg_alloc, nullptr) != VK_SUCCESS)
-        throw std::runtime_error("Staging buffer creation failed");
-
-    void* mapped;
-    vmaMapMemory(ctx.allocator, stg_alloc, &mapped);
-    std::memcpy(mapped, data, size);
-    vmaUnmapMemory(ctx.allocator, stg_alloc);
-
-    // Device-local destination buffer
-    VkBufferCreateInfo buf_ci{};
-    buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buf_ci.size  = size;
-    buf_ci.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-
-    VmaAllocationCreateInfo buf_ai{};
-    buf_ai.usage = VMA_MEMORY_USAGE_AUTO;
-    buf_ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-
-    if (vmaCreateBuffer(ctx.allocator, &buf_ci, &buf_ai,
-                        &out_buf, &out_alloc, nullptr) != VK_SUCCESS)
-        throw std::runtime_error("Device buffer creation failed");
-
-    VkCommandBuffer cmd = ctx.begin_one_shot();
-    VkBufferCopy region{0, 0, size};
-    vkCmdCopyBuffer(cmd, stg_buf, out_buf, 1, &region);
-    ctx.end_one_shot(cmd);
-
-    vmaDestroyBuffer(ctx.allocator, stg_buf, stg_alloc);
+void Mesh::resolve_addresses() {
+    vertex_addr = buffer_device_address(device, vertex_buf.buf);
+    index_addr  = buffer_device_address(device, index_buf.buf);
 }
 
 Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
@@ -177,22 +136,11 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
         vdata.push_back(normals[i].x); vdata.push_back(normals[i].y); vdata.push_back(normals[i].z);
     }
 
-    upload_buffer(ctx, VERTEX_USAGE,
-                  vdata.data(), vdata.size() * sizeof(float),
-                  vertex_buf, vertex_alloc);
-
-    upload_buffer(ctx, INDEX_USAGE,
-                  inds.data(), inds.size() * sizeof(uint32_t),
-                  index_buf, index_alloc);
-
-    // Device addresses needed by BLAS geometry descriptor.
-    VkBufferDeviceAddressInfo addr_info{};
-    addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    addr_info.buffer = vertex_buf;
-    vertex_addr = vkGetBufferDeviceAddress(device, &addr_info);
-
-    addr_info.buffer = index_buf;
-    index_addr = vkGetBufferDeviceAddress(device, &addr_info);
+    vertex_buf = upload_device_buffer(ctx, VERTEX_USAGE,
+                                      vdata.data(), vdata.size() * sizeof(float));
+    index_buf  = upload_device_buffer(ctx, INDEX_USAGE,
+                                      inds.data(),  inds.size()  * sizeof(uint32_t));
+    resolve_addresses();
 }
 
 Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
@@ -229,21 +177,14 @@ Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
     vertex_count = static_cast<uint32_t>(vdata.size() / 6);
     index_count  = static_cast<uint32_t>(inds.size());
 
-    upload_buffer(ctx, VERTEX_USAGE, vdata.data(), vdata.size() * sizeof(float),
-                  vertex_buf, vertex_alloc);
-    upload_buffer(ctx, INDEX_USAGE,  inds.data(),  inds.size()  * sizeof(uint32_t),
-                  index_buf,  index_alloc);
-
-    VkBufferDeviceAddressInfo addr_info{};
-    addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    addr_info.buffer = vertex_buf;
-    vertex_addr = vkGetBufferDeviceAddress(device, &addr_info);
-
-    addr_info.buffer = index_buf;
-    index_addr = vkGetBufferDeviceAddress(device, &addr_info);
+    vertex_buf = upload_device_buffer(ctx, VERTEX_USAGE,
+                                      vdata.data(), vdata.size() * sizeof(float));
+    index_buf  = upload_device_buffer(ctx, INDEX_USAGE,
+                                      inds.data(),  inds.size()  * sizeof(uint32_t));
+    resolve_addresses();
 }
 
 Mesh::~Mesh() {
-    vmaDestroyBuffer(allocator, vertex_buf, vertex_alloc);
-    vmaDestroyBuffer(allocator, index_buf,  index_alloc);
+    destroy_buffer(allocator, vertex_buf);
+    destroy_buffer(allocator, index_buf);
 }

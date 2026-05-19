@@ -1,4 +1,5 @@
 #include "accel.h"
+#include "gpu_buffer.h"
 #include "vk_context.h"
 #include "mesh.h"
 
@@ -39,7 +40,7 @@ AccelStructure& AccelStructure::operator=(AccelStructure&& o) noexcept {
 // ---------------------------------------------------------------------------
 // Internal helpers
 
-// Create a device-local buffer with SHADER_DEVICE_ADDRESS.
+// Create a device-local buffer with SHADER_DEVICE_ADDRESS (for AS storage and scratch).
 static VkBuffer make_device_buffer(VkContext& ctx,
                                    VkDeviceSize size,
                                    VkBufferUsageFlags usage,
@@ -57,13 +58,6 @@ static VkBuffer make_device_buffer(VkContext& ctx,
     if (vmaCreateBuffer(ctx.allocator, &ci, &ai, &buf, &out_alloc, nullptr) != VK_SUCCESS)
         throw std::runtime_error("AS buffer creation failed");
     return buf;
-}
-
-static VkDeviceAddress buffer_address(VkDevice dev, VkBuffer buf) {
-    VkBufferDeviceAddressInfo info{};
-    info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    info.buffer = buf;
-    return vkGetBufferDeviceAddress(dev, &info);
 }
 
 // Create an AccelerationStructureKHR backed by an already-allocated buffer.
@@ -143,7 +137,7 @@ AccelStructure build_blas(VkContext& ctx, Mesh& mesh, bool opaque) {
                                               scratch_alloc);
 
     build_info.dstAccelerationStructure  = result.handle;
-    build_info.scratchData.deviceAddress = buffer_address(ctx.device.device, scratch_buf);
+    build_info.scratchData.deviceAddress = buffer_device_address(ctx.device.device, scratch_buf);
 
     VkAccelerationStructureBuildRangeInfoKHR range{};
     range.primitiveCount = prim_count;
@@ -180,47 +174,17 @@ AccelStructure build_tlas(VkContext& ctx, const std::vector<TlasInstance>& insta
 
     VkDeviceSize inst_size = vk_insts.size() * sizeof(VkAccelerationStructureInstanceKHR);
 
-    // Upload via staging buffer — TLAS build reads from device-local memory.
-    VkBufferCreateInfo stg_ci{};
-    stg_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    stg_ci.size  = inst_size;
-    stg_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo stg_ai{};
-    stg_ai.usage = VMA_MEMORY_USAGE_AUTO;
-    stg_ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-
-    VkBuffer stg_buf; VmaAllocation stg_alloc;
-    if (vmaCreateBuffer(ctx.allocator, &stg_ci, &stg_ai, &stg_buf, &stg_alloc, nullptr) != VK_SUCCESS)
-        throw std::runtime_error("Instance staging buffer creation failed");
-    void* stg_mapped;
-    vmaMapMemory(ctx.allocator, stg_alloc, &stg_mapped);
-    std::memcpy(stg_mapped, vk_insts.data(), inst_size);
-    vmaUnmapMemory(ctx.allocator, stg_alloc);
-
-    VmaAllocation inst_alloc{};
-    VkBuffer inst_buf = make_device_buffer(
-        ctx, inst_size,
+    // Upload instance data to device-local memory. end_one_shot's vkQueueWaitIdle
+    // ensures the transfer is fully complete before the AS build reads it.
+    GpuBuffer inst_buf = upload_device_buffer(
+        ctx,
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        inst_alloc);
-
-    VkCommandBuffer cmd = ctx.begin_one_shot();
-    VkBufferCopy region{0, 0, inst_size};
-    vkCmdCopyBuffer(cmd, stg_buf, inst_buf, 1, &region);
-
-    VkMemoryBarrier barrier{};
-    barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        0, 1, &barrier, 0, nullptr, 0, nullptr);
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        vk_insts.data(), inst_size);
 
     VkAccelerationStructureGeometryInstancesDataKHR inst_data{};
     inst_data.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    inst_data.data.deviceAddress = buffer_address(ctx.device.device, inst_buf);
+    inst_data.data.deviceAddress = buffer_device_address(ctx.device.device, inst_buf.buf);
 
     VkAccelerationStructureGeometryKHR geom{};
     geom.sType               = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -255,17 +219,17 @@ AccelStructure build_tlas(VkContext& ctx, const std::vector<TlasInstance>& insta
                                               scratch_alloc);
 
     build_info.dstAccelerationStructure  = result.handle;
-    build_info.scratchData.deviceAddress = buffer_address(ctx.device.device, scratch_buf);
+    build_info.scratchData.deviceAddress = buffer_device_address(ctx.device.device, scratch_buf);
 
     VkAccelerationStructureBuildRangeInfoKHR range{};
     range.primitiveCount = inst_count;
     const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
 
+    VkCommandBuffer cmd = ctx.begin_one_shot();
     ctx.pfn_vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build_info, &range_ptr);
     ctx.end_one_shot(cmd);
 
     vmaDestroyBuffer(ctx.allocator, scratch_buf, scratch_alloc);
-    vmaDestroyBuffer(ctx.allocator, inst_buf,    inst_alloc);
-    vmaDestroyBuffer(ctx.allocator, stg_buf,     stg_alloc);
+    destroy_buffer(ctx.allocator, inst_buf);
     return result;
 }
