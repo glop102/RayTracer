@@ -51,15 +51,11 @@ int main() {
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
         if (s->camera) s->camera->on_cursor_pos(x, y);
     });
-    glfwSetScrollCallback(window, [](GLFWwindow* w, double, double dy) {
-        auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
-        if (s->camera) s->camera->on_scroll(dy);
-    });
-
     {
         VkContext ctx{window};
         Swapchain swapchain{ctx, WIDTH, HEIGHT};
-        Camera    camera{ctx};
+        Camera    camera;
+        camera.set_window(window);
         app.camera = &camera;
         FrameSync frame_sync{ctx, static_cast<uint32_t>(swapchain.images.size())};
         Mesh mesh {ctx, "bunny/reconstruction/bun_zipper_res2.ply"};
@@ -146,9 +142,15 @@ int main() {
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
 
         uint32_t frame_index = 0;
+        double   prev_time   = glfwGetTime();
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
+            double now = glfwGetTime();
+            float  dt  = static_cast<float>(now - prev_time);
+            prev_time  = now;
+            camera.tick(dt);
 
             int fw, fh;
             glfwGetFramebufferSize(window, &fw, &fh);
