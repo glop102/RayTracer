@@ -7,16 +7,25 @@
 static constexpr VkFormat STORAGE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
 
 RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
-                   std::span<const GpuBuffer> ssbos) {
-    device    = ctx.device.device;
-    allocator = ctx.allocator;
-    ssbos_    = {ssbos.begin(), ssbos.end()};
+                   std::span<const GpuBuffer> ssbos,
+                   std::span<const VkImageView> tex_views,
+                   VkSampler sampler) {
+    device     = ctx.device.device;
+    allocator  = ctx.allocator;
+    ssbos_     = {ssbos.begin(), ssbos.end()};
+    tex_views_ = {tex_views.begin(), tex_views.end()};
+    sampler_   = sampler;
+
+    uint32_t num_ssbos   = static_cast<uint32_t>(ssbos_.size());
+    uint32_t num_tex     = static_cast<uint32_t>(tex_views_.size());
+    uint32_t tex_binding = 2 + num_ssbos;
+    // max_tex: upper bound declared in the layout (variable count at alloc time).
+    // Must be at least 1 so the binding is valid; the actual allocated count can be 0.
+    static constexpr uint32_t MAX_TEX = 65536;
 
     // ------------------------------------------------------------------ Descriptor set layout
-    // binding 0        : TLAS (raygen)
-    // binding 1        : storage image (raygen)
-    // binding 2 .. 2+N : one SSBO per entry in ssbos (raygen | closest-hit)
-    std::vector<VkDescriptorSetLayoutBinding> bindings(2 + ssbos_.size());
+    uint32_t total_bindings = tex_binding + 1;  // includes the texture array slot
+    std::vector<VkDescriptorSetLayoutBinding> bindings(total_bindings);
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -28,7 +37,7 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    for (uint32_t i = 0; i < ssbos_.size(); i++) {
+    for (uint32_t i = 0; i < num_ssbos; i++) {
         bindings[2 + i].binding         = 2 + i;
         bindings[2 + i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         bindings[2 + i].descriptorCount = 1;
@@ -36,33 +45,57 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
                                           VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     }
 
+    // Texture array: variable count, partially bound (safe even when num_tex == 0).
+    bindings[tex_binding].binding         = tex_binding;
+    bindings[tex_binding].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[tex_binding].descriptorCount = MAX_TEX;
+    bindings[tex_binding].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    // Flags: only the last binding (texture array) needs VARIABLE | PARTIALLY_BOUND.
+    std::vector<VkDescriptorBindingFlags> binding_flags(total_bindings, 0);
+    binding_flags[tex_binding] = VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{};
+    flags_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    flags_ci.bindingCount  = total_bindings;
+    flags_ci.pBindingFlags = binding_flags.data();
+
     VkDescriptorSetLayoutCreateInfo layout_ci{};
     layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_ci.bindingCount = static_cast<uint32_t>(bindings.size());
+    layout_ci.pNext        = &flags_ci;
+    layout_ci.bindingCount = total_bindings;
     layout_ci.pBindings    = bindings.data();
     if (vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &descriptor_set_layout) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor set layout creation failed");
 
     // ------------------------------------------------------------------ Descriptor pool
-    VkDescriptorPoolSize pool_sizes[3]{};
-    pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    pool_sizes[0].descriptorCount = 1;
-    pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool_sizes[1].descriptorCount = 1;
-    pool_sizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    pool_sizes[2].descriptorCount = static_cast<uint32_t>(ssbos_.size());
+    std::vector<VkDescriptorPoolSize> pool_sizes;
+    pool_sizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1});
+    pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              1});
+    if (num_ssbos > 0)
+        pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, num_ssbos});
+    if (num_tex > 0)
+        pool_sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, num_tex});
 
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_ci.maxSets       = 1;
-    pool_ci.poolSizeCount = 3;
-    pool_ci.pPoolSizes    = pool_sizes;
+    pool_ci.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+    pool_ci.pPoolSizes    = pool_sizes.data();
     if (vkCreateDescriptorPool(device, &pool_ci, nullptr, &descriptor_pool) != VK_SUCCESS)
         throw std::runtime_error("RT output descriptor pool creation failed");
 
-    // ------------------------------------------------------------------ Descriptor set
+    // ------------------------------------------------------------------ Descriptor set (variable count)
+    uint32_t var_count = num_tex;
+    VkDescriptorSetVariableDescriptorCountAllocateInfo var_ai{};
+    var_ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    var_ai.descriptorSetCount = 1;
+    var_ai.pDescriptorCounts  = &var_count;
+
     VkDescriptorSetAllocateInfo set_ai{};
     set_ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    set_ai.pNext              = &var_ai;
     set_ai.descriptorPool     = descriptor_pool;
     set_ai.descriptorSetCount = 1;
     set_ai.pSetLayouts        = &descriptor_set_layout;
@@ -183,6 +216,23 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
         w.descriptorCount = 1;
         w.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w.pBufferInfo     = &buf_infos[i];
+        writes.push_back(w);
+    }
+
+    // Texture array (binding 2+N): one entry per texture.
+    uint32_t tex_binding = 2 + static_cast<uint32_t>(ssbos_.size());
+    std::vector<VkDescriptorImageInfo> img_infos;
+    if (!tex_views_.empty() && sampler_ != VK_NULL_HANDLE) {
+        img_infos.reserve(tex_views_.size());
+        for (VkImageView v : tex_views_)
+            img_infos.push_back({sampler_, v, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet          = descriptor_set;
+        w.dstBinding      = tex_binding;
+        w.descriptorCount = static_cast<uint32_t>(img_infos.size());
+        w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo      = img_infos.data();
         writes.push_back(w);
     }
 

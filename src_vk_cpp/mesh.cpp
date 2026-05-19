@@ -123,17 +123,17 @@ Mesh::Mesh(VkContext& ctx, const std::string& ply_path) {
     vertex_count = static_cast<uint32_t>(verts.size());
     index_count  = static_cast<uint32_t>(inds.size());
 
-    // Compute smooth normals and interleave with positions: {x,y,z, nx,ny,nz}.
-    // The BLAS reads only the position portion (stride = 6 floats).
-    // The closest-hit shader reads normals at offset +3.
+    // Compute smooth normals and interleave: {x,y,z, nx,ny,nz, u=0, v=0}.
+    // BLAS reads only positions (stride = 8 floats); closest-hit reads normals at +3, UVs at +6.
     std::vector<glm::vec3> normals;
     compute_normals(verts, inds, normals);
 
     std::vector<float> vdata;
-    vdata.reserve(verts.size() * 6);
+    vdata.reserve(verts.size() * 8);
     for (size_t i = 0; i < verts.size(); i++) {
         vdata.push_back(verts[i].x);   vdata.push_back(verts[i].y);   vdata.push_back(verts[i].z);
         vdata.push_back(normals[i].x); vdata.push_back(normals[i].y); vdata.push_back(normals[i].z);
+        vdata.push_back(0.0f); vdata.push_back(0.0f);  // u, v — PLY has no UV data
     }
 
     vertex_buf    = upload_device_buffer(ctx, VERTEX_USAGE,
@@ -161,22 +161,27 @@ Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
         {{{mx.x,mn.y,mn.z},{mn.x,mn.y,mn.z},{mn.x,mx.y,mn.z},{mx.x,mx.y,mn.z}}, { 0, 0,-1}},
     };
 
+    // UV layout per face: four corners (0,0) (1,0) (1,1) (0,1) in CCW order.
+    static constexpr float face_uvs[4][2] = {{0,0},{1,0},{1,1},{0,1}};
+
     std::vector<float>    vdata;
     std::vector<uint32_t> inds;
-    vdata.reserve(24 * 6);
+    vdata.reserve(24 * 8);
     inds.reserve(36);
 
     for (const auto& f : faces) {
-        auto base = static_cast<uint32_t>(vdata.size() / 6);
-        for (const auto& p : f.v) {
+        auto base = static_cast<uint32_t>(vdata.size() / 8);
+        for (int vi = 0; vi < 4; vi++) {
+            const auto& p = f.v[vi];
             vdata.push_back(p.x); vdata.push_back(p.y); vdata.push_back(p.z);
             vdata.push_back(f.n.x); vdata.push_back(f.n.y); vdata.push_back(f.n.z);
+            vdata.push_back(face_uvs[vi][0]); vdata.push_back(face_uvs[vi][1]);
         }
         inds.push_back(base+0); inds.push_back(base+1); inds.push_back(base+2);
         inds.push_back(base+0); inds.push_back(base+2); inds.push_back(base+3);
     }
 
-    vertex_count = static_cast<uint32_t>(vdata.size() / 6);
+    vertex_count = static_cast<uint32_t>(vdata.size() / 8);
     index_count  = static_cast<uint32_t>(inds.size());
 
     vertex_buf = upload_device_buffer(ctx, VERTEX_USAGE,
@@ -189,6 +194,25 @@ Mesh::Mesh(VkContext& ctx, glm::vec3 mn, glm::vec3 mx) {
     for (const auto& f : faces)
         for (const auto& p : f.v)
             cpu_positions.push_back(p);
+    cpu_indices = std::move(inds);
+    resolve_addresses();
+}
+
+Mesh::Mesh(VkContext& ctx, std::vector<float> vdata, std::vector<uint32_t> inds) {
+    device    = ctx.device.device;
+    allocator = ctx.allocator;
+
+    vertex_count = static_cast<uint32_t>(vdata.size() / 8);
+    index_count  = static_cast<uint32_t>(inds.size());
+
+    vertex_buf = upload_device_buffer(ctx, VERTEX_USAGE,
+                                      vdata.data(), vdata.size() * sizeof(float));
+    index_buf  = upload_device_buffer(ctx, INDEX_USAGE,
+                                      inds.data(),  inds.size()  * sizeof(uint32_t));
+
+    cpu_positions.reserve(vertex_count);
+    for (uint32_t i = 0; i < vertex_count; i++)
+        cpu_positions.push_back({vdata[i*8+0], vdata[i*8+1], vdata[i*8+2]});
     cpu_indices = std::move(inds);
     resolve_addresses();
 }

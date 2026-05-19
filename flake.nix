@@ -66,6 +66,7 @@
                 vulkan-memory-allocator
                 glfw
                 glm
+                tinygltf
                 gnumake
                 gcc
               ];

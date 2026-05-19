@@ -5,8 +5,8 @@ CXXFLAGS += $(shell pkg-config --cflags glfw3 vulkan glm)
 LDFLAGS  := $(shell pkg-config --libs glfw3 vulkan shaderc) -lvk-bootstrap
 
 SRCS   := main.cpp vk_context.cpp swapchain.cpp frame_sync.cpp mesh.cpp camera.cpp \
-          accel.cpp gpu_buffer.cpp scene_data.cpp rt_output.cpp rt_pipeline.cpp \
-          pipeline.cpp render_pass.cpp
+          accel.cpp gpu_buffer.cpp gpu_texture.cpp scene_data.cpp gltf_scene.cpp \
+          rt_output.cpp rt_pipeline.cpp pipeline.cpp render_pass.cpp
 OBJS   := $(SRCS:.cpp=.o)
 TARGET := raytracer_vk
 

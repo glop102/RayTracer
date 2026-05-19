@@ -34,6 +34,7 @@ final: prev: {
       shaderc
       glfw
       glm
+      tinygltf
     ];
 
     makeFlags = [

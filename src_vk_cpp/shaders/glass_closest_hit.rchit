@@ -11,9 +11,12 @@ void main() {
     MeshRef      mesh = mesh_refs.d[inst.mesh_idx];
     GpuMaterial  mat  = materials.d[inst.mat_idx];
 
+    uint i0, i1, i2;
+    fetch_hit_indices(mesh, i0, i1, i2);
+
     // Normal is always outward-facing (no back-face flip).
     // Raygen uses sign of payload.ior to determine entry vs exit.
-    vec3 world_normal = fetch_world_normal(mesh);
+    vec3 world_normal = fetch_world_normal(mesh, i0, i1, i2);
 
     payload.hit        = 1;
     payload.position   = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;

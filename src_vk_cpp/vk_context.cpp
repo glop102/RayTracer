@@ -44,8 +44,12 @@ VkContext::VkContext(GLFWwindow* window) {
     // bufferDeviceAddress and descriptorIndexing are Vulkan 1.2 core.
     VkPhysicalDeviceVulkan12Features vk12_features{};
     vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    vk12_features.bufferDeviceAddress = VK_TRUE;
-    vk12_features.descriptorIndexing  = VK_TRUE;
+    vk12_features.bufferDeviceAddress                       = VK_TRUE;
+    vk12_features.descriptorIndexing                        = VK_TRUE;
+    vk12_features.runtimeDescriptorArray                    = VK_TRUE;
+    vk12_features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    vk12_features.descriptorBindingVariableDescriptorCount  = VK_TRUE;
+    vk12_features.descriptorBindingPartiallyBound           = VK_TRUE;
 
     // shaderInt64 is a 1.0 core feature; route it through VkPhysicalDeviceFeatures2
     // in the pNext chain (incompatible with pEnabledFeatures, which we leave NULL).

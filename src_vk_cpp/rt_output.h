@@ -11,7 +11,8 @@ struct VkContext;
 //   binding 0        : TLAS               (raygen)
 //   binding 1        : storage image      (raygen)
 //   binding 2 .. 2+N : SSBOs from caller  (raygen | closest-hit)
-// Must be recreated on swapchain resize; SSBOs are stable across resizes.
+//   binding 2+N+1    : COMBINED_IMAGE_SAMPLER array, variable count (closest-hit)
+// Must be recreated on swapchain resize; SSBOs and textures are stable across resizes.
 struct RtOutput {
     VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool      descriptor_pool       = VK_NULL_HANDLE;
@@ -22,7 +23,9 @@ struct RtOutput {
     VkImageView   view  = VK_NULL_HANDLE;
 
     RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
-             std::span<const GpuBuffer> ssbos);
+             std::span<const GpuBuffer> ssbos,
+             std::span<const VkImageView> tex_views = {},
+             VkSampler sampler = VK_NULL_HANDLE);
     ~RtOutput();
 
     // Recreate the storage image for a new extent and rebind all descriptors.
@@ -35,7 +38,9 @@ private:
     VkDevice     device    = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
 
-    std::vector<GpuBuffer> ssbos_;  // non-owning handles; SceneData owns the memory
+    std::vector<GpuBuffer>   ssbos_;       // non-owning; SceneData owns memory
+    std::vector<VkImageView> tex_views_;   // non-owning; LoadedScene owns images
+    VkSampler                sampler_ = VK_NULL_HANDLE;  // non-owning
 
     void create_image(VkContext& ctx, VkExtent2D extent);
     void destroy_image();

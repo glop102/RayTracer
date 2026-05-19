@@ -18,13 +18,14 @@ struct GpuMeshRef {
 };
 
 // Material parameters — stored in a SSBO and indexed by material_index.
-// Layout matches the GLSL GpuMaterial struct (std430).
+// Layout matches the GLSL GpuMaterial struct (std430, 80 bytes = 5×vec4).
 // {vec3, float} packing avoids std430 padding between members.
 struct GpuMaterial {
     glm::vec3 diffuse;    float roughness;
     glm::vec3 specular;   float ior;        // index of refraction; 0 = opaque
-    glm::vec3 emissive;   float _pad1;
-    glm::vec3 absorption; float _pad2;      // Beer-Lambert coefficient (per channel); 0 = no absorption
+    glm::vec3 emissive;   float metallic;   // PBR metallic factor (0 for non-GLTF materials)
+    glm::vec3 absorption; float _pad2;      // Beer-Lambert coefficient (per channel)
+    int diffuse_tex;   int mr_tex; int normal_tex; int _pad3;  // -1 = no texture
 };
 
 // Per-instance lookup: which mesh and material does each TLAS instance use.

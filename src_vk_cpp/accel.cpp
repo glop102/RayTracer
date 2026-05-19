@@ -96,7 +96,7 @@ AccelStructure build_blas(VkContext& ctx, Mesh& mesh, bool opaque) {
     triangles.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     triangles.vertexFormat  = VK_FORMAT_R32G32B32_SFLOAT;
     triangles.vertexData.deviceAddress = mesh.vertex_addr;
-    triangles.vertexStride  = sizeof(float) * 6;  // interleaved {pos, normal}
+    triangles.vertexStride  = sizeof(float) * 8;  // interleaved {pos, normal, uv}
     triangles.maxVertex     = mesh.vertex_count - 1;
     triangles.indexType     = VK_INDEX_TYPE_UINT32;
     triangles.indexData.deviceAddress  = mesh.index_addr;

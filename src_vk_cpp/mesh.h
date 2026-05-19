@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <utility>
 
 struct VkContext;
 
@@ -23,6 +24,8 @@ struct Mesh {
 
     Mesh(VkContext& ctx, const std::string& ply_path);
     Mesh(VkContext& ctx, glm::vec3 min_pt, glm::vec3 max_pt); // axis-aligned box (6 faces, face normals)
+    // From pre-interleaved {x,y,z,nx,ny,nz,u,v} data — for GLTF-loaded meshes.
+    Mesh(VkContext& ctx, std::vector<float> vdata, std::vector<uint32_t> inds);
     ~Mesh();
 
     Mesh(const Mesh&)            = delete;
