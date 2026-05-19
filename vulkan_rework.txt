@@ -51,15 +51,15 @@ Milestones:
        no CPU-side normal computation needed, gives flat-shaded face visualization.
        Note: Stanford bunny PLY uses X-up convention (not Y-up as assumed).
 
-  4. [DONE] Orbit camera with a UBO (uniform buffer object)
-       Camera struct owns a persistently-mapped VkBuffer (VMA AUTO +
-       HOST_ACCESS_SEQUENTIAL_WRITE + MAPPED), descriptor set layout (binding 0,
-       vertex stage), descriptor pool, and set. Orbit state is spherical
-       (theta/phi/radius + target); left-drag orbits, scroll zooms with radius
-       clamped to [0.05, 2.0]. GLFW callbacks route through a small AppState
-       struct stored in the window user pointer alongside the resize flag.
-       Pipeline layout uses the camera descriptor set layout; push constant
-       removed. Vertex shader reads MVP from UBO at set=0 binding=0.
+  4. [DONE → REPLACED] Orbit camera with a UBO (uniform buffer object)
+       Originally implemented as orbit state (theta/phi/radius + target) with
+       a persistently-mapped UBO and descriptor set for rasterization MVP.
+       Replaced in the RT cleanup phase by a first-person camera (no Vulkan
+       dependency at all): pos/yaw/pitch state, click-to-capture mouse,
+       WASD/EQ movement, mouse-look. tick(float dt) polls GLFW key state each
+       frame; glfwGetTime() provides wall-clock dt. Camera::rt_push() derives
+       forward/right/up from yaw/pitch to fill RtCameraPush. UBO, descriptor
+       pool, and descriptor set layout removed entirely.
 
 This is ~1800 lines of setup but you only write it once. Every subsequent stage
 reuses the same device/swapchain/command buffer scaffolding.
@@ -166,10 +166,16 @@ ordered by noise-reduction-per-effort.
 
   1. [DONE] Emissive materials + Next Event Estimation (NEE)
      GpuLightTriangle SSBO (binding 5, raygen-visible): world-space v0/v1/v2 +
-     emission, 4×vec4 = 64 bytes each, populated on the CPU for all downward-
-     facing triangles of emissive meshes (2 triangles from the area light's
-     bottom face). A warm-white area light (4.0, 3.5, 2.5) sits at y=0.33–0.35
-     above the scene as a fifth TLAS instance with its own opaque BLAS.
+     emission, 4×vec4 = 64 bytes each. extract_light_triangles() in scene_data.cpp
+     scans all SceneInstances for non-zero emissive materials and collects every
+     triangle of matching meshes — no manual face selection. Back-facing triangles
+     are included; the shader's cos_theta_l check discards their contribution
+     without bias, which generalises correctly to arbitrary emissive geometry.
+     Emission values come from GpuMaterial as the single source of truth.
+     A warm-white area light (4.0, 3.5, 2.5) sits at y=0.33–0.35 above the scene
+     as a fifth TLAS instance with its own opaque BLAS. A sixth instance (floor,
+     pale concrete, y≈−0.04) and a black sky (miss shader returns vec3(0)) were
+     added to isolate area-light illumination and ground the scene.
 
      Shadow ray: payload location 1 (int shadow_hit), shadow_miss.rmiss sets it
      to 0 on miss. Traced with gl_RayFlagsSkipClosestHitShaderEXT |
