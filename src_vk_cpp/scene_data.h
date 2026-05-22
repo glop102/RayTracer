@@ -38,11 +38,13 @@ struct GpuInstanceData {
 
 // One emissive triangle in world space — stored in a SSBO for NEE light sampling.
 // Matches the GLSL LightTriangle struct (std430, 4×vec4 = 64 bytes).
+// cdf:           normalized cumulative power CDF in [0,1] — used for importance sampling.
+// select_weight: total_power / length(emission) — folds the PDF into the estimator.
 struct GpuLightTriangle {
-    glm::vec3 v0;       float _pad0;
+    glm::vec3 v0;       float cdf;
     glm::vec3 v1;       float _pad1;
     glm::vec3 v2;       float _pad2;
-    glm::vec3 emission; float _pad3;
+    glm::vec3 emission; float select_weight;
 };
 
 // Resolved per-instance data used for light extraction (and future scene loaders).

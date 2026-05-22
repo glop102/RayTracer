@@ -78,7 +78,16 @@ vec3 sample_ggx_H(inout uint rng, vec3 N, float alpha) {
 // NEE: sample one light triangle and return a direct-lighting contribution.
 // Returns vec3(0) if the light is occluded or back-facing.
 vec3 sample_direct_light(inout uint rng, vec3 hit_pos, vec3 hit_normal, vec3 mat_color) {
-    uint li = uint(rand01(rng) * float(cam.num_light_tris)) % cam.num_light_tris;
+    // Importance-sample a light triangle proportional to power (area × ||emission||).
+    // lt.v0_.w holds the normalized cumulative CDF; binary search for lower_bound(xi).
+    float xi = rand01(rng);
+    uint lo = 0u, hi = cam.num_light_tris - 1u;
+    while (lo < hi) {
+        uint mid = (lo + hi) >> 1u;
+        if (light_tris.d[mid].v0_.w < xi) lo = mid + 1u;
+        else hi = mid;
+    }
+    uint li = lo;
     LightTriangle lt = light_tris.d[li];
     vec3 v0       = lt.v0_.xyz;
     vec3 v1       = lt.v1_.xyz;
@@ -121,11 +130,11 @@ vec3 sample_direct_light(inout uint rng, vec3 hit_pos, vec3 hit_normal, vec3 mat
     if (shadow_hit != 0)
         return vec3(0.0);
 
-    // pdf in area measure: 1 / (num_light_tris * area)
-    // convert to solid angle: pdf_omega = pdf_area * dist^2 / cos_theta_l
-    // estimator = emission * f_r * cos_theta / pdf_omega
-    //           = emission * (mat_color/PI) * cos_theta * num_light_tris * area * cos_theta_l / dist^2
-    float pdf_weight = float(cam.num_light_tris) * area * cos_theta_l / (dist * dist);
+    // pdf_select = power_i / total_power;  pdf_area = pdf_select / area_i
+    // estimator = emission * (mat_color/PI) * cos_theta * cos_theta_l * area_i / (pdf_select * dist^2)
+    //           = emission * (mat_color/PI) * cos_theta * cos_theta_l * select_weight / dist^2
+    // where select_weight = total_power / ||emission_i|| is precomputed on the CPU.
+    float pdf_weight = lt.emission_.w * cos_theta_l / (dist * dist);
     return emission * (mat_color / 3.14159265) * cos_theta * pdf_weight;
 }
 

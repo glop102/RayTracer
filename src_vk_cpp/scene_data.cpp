@@ -26,6 +26,28 @@ std::vector<GpuLightTriangle> extract_light_triangles(
             result.push_back({v0, 0.0f, v1, 0.0f, v2, 0.0f, mat.emissive, 0.0f});
         }
     }
+
+    // Build power-weighted CDF.  power_i = area_i * ||emission_i||.
+    // cdf field holds the running normalized cumulative sum in [0,1].
+    // select_weight = total_power / ||emission_i|| folds the PDF into the estimator
+    // so the shader needs no separate total_power uniform.
+    float total_power = 0.0f;
+    for (auto& lt : result) {
+        float area  = 0.5f * glm::length(glm::cross(lt.v1 - lt.v0, lt.v2 - lt.v0));
+        float power = area * glm::length(lt.emission);
+        lt.cdf       = power;   // temporarily store raw power; normalized below
+        total_power += power;
+    }
+    if (total_power > 0.0f) {
+        float running = 0.0f;
+        for (auto& lt : result) {
+            running      += lt.cdf;
+            lt.cdf        = running / total_power;
+            float em_len  = glm::length(lt.emission);
+            lt.select_weight = (em_len > 0.0f) ? total_power / em_len : 0.0f;
+        }
+    }
+
     return result;
 }
 
