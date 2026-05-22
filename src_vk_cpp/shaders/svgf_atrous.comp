@@ -1,0 +1,57 @@
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly  image2D in_color;
+layout(set = 0, binding = 1, rgba32f) uniform readonly  image2D in_normal;
+layout(set = 0, binding = 2, rgba32f) uniform writeonly image2D out_color;
+
+layout(push_constant) uniform PC {
+    int step_width;
+} pc;
+
+// B3-spline weights for the dilated 5-tap kernel used in À-trous wavelet filtering.
+// kern[abs(offset)] gives the 1-D coefficient; 2-D weight = kern[abs(i)] * kern[abs(j)].
+const float kern[3] = float[3](3.0/8.0, 1.0/4.0, 1.0/16.0);
+
+float luminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(in_color);
+    if (any(greaterThanEqual(pixel, size))) return;
+
+    vec3  p_col  = imageLoad(in_color,  pixel).rgb;
+    vec3  p_norm = imageLoad(in_normal, pixel).xyz;
+    float p_lum  = luminance(p_col);
+
+    vec3  sum_c = vec3(0.0);
+    float sum_w = 0.0;
+
+    for (int j = -2; j <= 2; j++) {
+        for (int i = -2; i <= 2; i++) {
+            ivec2 q     = clamp(pixel + ivec2(i, j) * pc.step_width, ivec2(0), size - 1);
+            float h     = kern[abs(i)] * kern[abs(j)];
+
+            vec3  q_col  = imageLoad(in_color,  q).rgb;
+            vec3  q_norm = imageLoad(in_normal, q).xyz;
+            float q_lum  = luminance(q_col);
+
+            // Edge-stopping: normal similarity (4th power for crisp boundaries)
+            float w_n = pow(max(0.0, dot(p_norm, q_norm)), 4.0);
+
+            // Edge-stopping: luminance difference (scale sigma by step width so later
+            // passes with wider kernels preserve sharper features)
+            float sigma_l = 0.1 + 0.05 * float(pc.step_width);
+            float diff_l  = abs(p_lum - q_lum);
+            float w_l     = exp(-diff_l / (sigma_l + 1e-6));
+
+            float w = h * w_n * w_l;
+            sum_c += q_col * w;
+            sum_w += w;
+        }
+    }
+
+    vec3 result = (sum_w > 1e-6) ? sum_c / sum_w : p_col;
+    imageStore(out_color, pixel, vec4(result, 1.0));
+}

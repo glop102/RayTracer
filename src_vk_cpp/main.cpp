@@ -15,6 +15,7 @@
 #include "rt_output.h"
 #include "rt_pipeline.h"
 #include "denoiser_oidn.h"
+#include "denoiser_svgf.h"
 
 static constexpr uint32_t WIDTH  = 1280;
 static constexpr uint32_t HEIGHT = 720;
@@ -39,7 +40,11 @@ int main(int argc, char* argv[]) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan RT", nullptr, nullptr);
 
-    struct AppState { bool resize_needed = false; Camera* camera = nullptr; IDenoiser* denoiser = nullptr; };
+    struct AppState {
+        bool         resize_needed = false;
+        Camera*      camera        = nullptr;
+        DenoiserMode denoiser_mode = DenoiserMode::None;
+    };
     AppState app;
     glfwSetWindowUserPointer(window, &app);
 
@@ -55,9 +60,11 @@ int main(int argc, char* argv[]) {
         if (s->camera) s->camera->on_cursor_pos(x, y);
     });
     glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int mods) {
+        if (action != GLFW_PRESS || !(mods & GLFW_MOD_ALT)) return;
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
-        if (key == GLFW_KEY_D && action == GLFW_PRESS && (mods & GLFW_MOD_ALT) && s->denoiser)
-            s->denoiser->enabled = !s->denoiser->enabled;
+        if      (key == GLFW_KEY_O) s->denoiser_mode = (s->denoiser_mode == DenoiserMode::OIDN) ? DenoiserMode::None : DenoiserMode::OIDN;
+        else if (key == GLFW_KEY_U) s->denoiser_mode = (s->denoiser_mode == DenoiserMode::SVGF) ? DenoiserMode::None : DenoiserMode::SVGF;
+        else if (key == GLFW_KEY_P) s->denoiser_mode = DenoiserMode::None;
     });
     {
         VkContext ctx{window};
@@ -247,10 +254,13 @@ int main(int argc, char* argv[]) {
         RtOutput   rt_output  {ctx, swapchain.extent, tlas.handle, ssbos, tex_views, tex_sampler};
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
 
-        OidnDenoiser denoiser;
-        denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
+        OidnDenoiser oidn_denoiser;
+        oidn_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
             rt_output.image, rt_output.albedo_image, rt_output.normal_image);
-        app.denoiser = &denoiser;
+
+        SvgfDenoiser svgf_denoiser;
+        svgf_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
+            rt_output.image, rt_output.albedo_image, rt_output.normal_image);
 
         // ================================================================
         // Frame loop
@@ -276,7 +286,9 @@ int main(int argc, char* argv[]) {
                 vkDeviceWaitIdle(ctx.device.device);
                 swapchain.recreate(ctx, static_cast<uint32_t>(fw), static_cast<uint32_t>(fh));
                 rt_output.recreate(ctx, swapchain.extent, tlas.handle);
-                denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
+                oidn_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
+                    rt_output.image, rt_output.albedo_image, rt_output.normal_image);
+                svgf_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
                     rt_output.image, rt_output.albedo_image, rt_output.normal_image);
                 frame_index = 0;
                 continue;
@@ -284,7 +296,11 @@ int main(int argc, char* argv[]) {
 
             if (camera.consume_moved()) frame_index = 0;
 
-            if (denoiser.enabled) {
+            IDenoiser* active_denoiser = nullptr;
+            if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
+            else if (app.denoiser_mode == DenoiserMode::SVGF) active_denoiser = &svgf_denoiser;
+
+            if (active_denoiser) {
                 // ======================================================
                 // DENOISED PATH
                 // ======================================================
@@ -304,11 +320,11 @@ int main(int argc, char* argv[]) {
                     &rt_pipeline.raygen_region, &rt_pipeline.miss_region,
                     &rt_pipeline.hit_region,    &rt_pipeline.callable_region,
                     swapchain.extent.width, swapchain.extent.height, 1);
-                denoiser.record_pre(cmd1);
+                active_denoiser->record_pre(cmd1);
                 ctx.end_one_shot(cmd1);  // submit + vkQueueWaitIdle
 
                 // Phase 2: CPU denoising (no-op for GPU denoisers)
-                denoiser.execute();
+                active_denoiser->execute();
 
                 // Phase 3: upload + present
                 auto frame_opt = frame_sync.acquire(swapchain.handle);
@@ -319,7 +335,7 @@ int main(int argc, char* argv[]) {
                 if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
                     throw std::runtime_error("Failed to begin command buffer");
 
-                denoiser.record_post(cmd);
+                active_denoiser->record_post(cmd);
 
                 image_barrier(cmd, swapchain.images[image_index],
                     0, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -333,7 +349,7 @@ int main(int argc, char* argv[]) {
                     blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
                     blit.dstOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
                     vkCmdBlitImage(cmd,
-                        denoiser.output_image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        active_denoiser->output_image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                         swapchain.images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         1, &blit, VK_FILTER_NEAREST);
                 }

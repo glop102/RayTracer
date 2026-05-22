@@ -4,6 +4,8 @@
 
 struct VkContext;
 
+enum class DenoiserMode { None, OIDN, SVGF };
+
 class IDenoiser {
 public:
     virtual ~IDenoiser();
@@ -23,6 +25,4 @@ public:
 
     // Record staging→output upload and transition to TRANSFER_SRC_OPTIMAL. No-op for GPU denoisers.
     virtual void record_post(VkCommandBuffer cmd) {}
-
-    bool enabled = false;
 };
