@@ -68,7 +68,7 @@ void SvgfDenoiser::destroy_images() {
         vkDestroyDescriptorPool(device_, pool_, nullptr);
         pool_ = VK_NULL_HANDLE;
     }
-    for (auto* v : {&color_view_, &normal_view_}) {
+    for (auto* v : {&color_view_, &albedo_view_, &normal_view_}) {
         if (*v) { vkDestroyImageView(device_, *v, nullptr); *v = VK_NULL_HANDLE; }
     }
     for (auto& fb : bufs_) {
@@ -83,14 +83,14 @@ void SvgfDenoiser::create_pipeline(VkContext& ctx) {
                             "svgf_atrous.comp", shaderc_glsl_compute_shader);
     VkShaderModule mod = make_module(ctx.device.device, spv);
 
-    VkDescriptorSetLayoutBinding bindings[3]{};
-    for (int i = 0; i < 3; i++) {
+    VkDescriptorSetLayoutBinding bindings[4]{};
+    for (int i = 0; i < 4; i++) {
         bindings[i] = {(uint32_t)i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                        1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     }
     VkDescriptorSetLayoutCreateInfo dsl_ci{};
     dsl_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dsl_ci.bindingCount = 3;
+    dsl_ci.bindingCount = 4;
     dsl_ci.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(ctx.device.device, &dsl_ci, nullptr, &dsl_) != VK_SUCCESS)
         throw std::runtime_error("SVGF DSL creation failed");
@@ -119,11 +119,12 @@ void SvgfDenoiser::create_pipeline(VkContext& ctx) {
 }
 
 void SvgfDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
-                          VkImage color, VkImage /*albedo*/, VkImage normal) {
+                          VkImage color, VkImage albedo, VkImage normal) {
     device_    = ctx.device.device;
     allocator_ = ctx.allocator;
     w_ = w; h_ = h;
     color_image_  = color;
+    albedo_image_ = albedo;
     normal_image_ = normal;
 
     if (!pipeline_) create_pipeline(ctx);
@@ -131,11 +132,12 @@ void SvgfDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
     destroy_images();
 
     color_view_  = make_view(color_image_);
+    albedo_view_ = make_view(albedo_image_);
     normal_view_ = make_view(normal_image_);
     bufs_[0] = make_filter_buf();
     bufs_[1] = make_filter_buf();
 
-    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 * NUM_PASSES};
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * NUM_PASSES};
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_ci.maxSets       = NUM_PASSES;
@@ -163,13 +165,14 @@ void SvgfDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
     const VkImageView out_views[NUM_PASSES] = {bufs_[0].view, bufs_[1].view, bufs_[0].view, bufs_[1].view};
 
     for (int i = 0; i < NUM_PASSES; i++) {
-        VkDescriptorImageInfo img_infos[3] = {
+        VkDescriptorImageInfo img_infos[4] = {
             {VK_NULL_HANDLE, in_views[i],   VK_IMAGE_LAYOUT_GENERAL},
             {VK_NULL_HANDLE, normal_view_,  VK_IMAGE_LAYOUT_GENERAL},
             {VK_NULL_HANDLE, out_views[i],  VK_IMAGE_LAYOUT_GENERAL},
+            {VK_NULL_HANDLE, albedo_view_,  VK_IMAGE_LAYOUT_GENERAL},
         };
-        VkWriteDescriptorSet writes[3]{};
-        for (int b = 0; b < 3; b++) {
+        VkWriteDescriptorSet writes[4]{};
+        for (int b = 0; b < 4; b++) {
             writes[b].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[b].dstSet          = dsets_[i];
             writes[b].dstBinding      = (uint32_t)b;
@@ -177,7 +180,7 @@ void SvgfDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
             writes[b].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[b].pImageInfo      = &img_infos[b];
         }
-        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
     }
 }
 
@@ -194,10 +197,10 @@ void SvgfDenoiser::record_pre(VkCommandBuffer cmd) {
             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     }
 
-    // Memory dependency: raytrace SHADER_WRITE → compute SHADER_READ on both G-buffers.
-    VkImageMemoryBarrier rt_barriers[2]{};
-    const VkImage rt_images[2] = {color_image_, normal_image_};
-    for (int i = 0; i < 2; i++) {
+    // Memory dependency: raytrace SHADER_WRITE → compute SHADER_READ on all G-buffers.
+    VkImageMemoryBarrier rt_barriers[3]{};
+    const VkImage rt_images[3] = {color_image_, albedo_image_, normal_image_};
+    for (int i = 0; i < 3; i++) {
         rt_barriers[i].sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         rt_barriers[i].srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
         rt_barriers[i].dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
@@ -208,7 +211,7 @@ void SvgfDenoiser::record_pre(VkCommandBuffer cmd) {
     }
     vkCmdPipelineBarrier(cmd,
         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 2, rt_barriers);
+        0, 0, nullptr, 0, nullptr, 3, rt_barriers);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
 
@@ -239,11 +242,11 @@ void SvgfDenoiser::record_pre(VkCommandBuffer cmd) {
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
     // Restore G-buffers so raygen can write them next frame.
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         rt_barriers[i].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
         rt_barriers[i].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     }
     vkCmdPipelineBarrier(cmd,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-        0, 0, nullptr, 0, nullptr, 2, rt_barriers);
+        0, 0, nullptr, 0, nullptr, 3, rt_barriers);
 }

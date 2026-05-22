@@ -62,8 +62,8 @@ int main(int argc, char* argv[]) {
     glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int mods) {
         if (action != GLFW_PRESS || !(mods & GLFW_MOD_ALT)) return;
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
-        if      (key == GLFW_KEY_O) s->denoiser_mode = (s->denoiser_mode == DenoiserMode::OIDN) ? DenoiserMode::None : DenoiserMode::OIDN;
-        else if (key == GLFW_KEY_U) s->denoiser_mode = (s->denoiser_mode == DenoiserMode::SVGF) ? DenoiserMode::None : DenoiserMode::SVGF;
+        if      (key == GLFW_KEY_O) s->denoiser_mode = DenoiserMode::OIDN;
+        else if (key == GLFW_KEY_U) s->denoiser_mode = DenoiserMode::SVGF;
         else if (key == GLFW_KEY_P) s->denoiser_mode = DenoiserMode::None;
     });
     {

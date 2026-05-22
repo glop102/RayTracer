@@ -5,13 +5,13 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, rgba32f) uniform readonly  image2D in_color;
 layout(set = 0, binding = 1, rgba32f) uniform readonly  image2D in_normal;
 layout(set = 0, binding = 2, rgba32f) uniform writeonly image2D out_color;
+layout(set = 0, binding = 3, rgba32f) uniform readonly  image2D in_albedo;
 
 layout(push_constant) uniform PC {
     int step_width;
 } pc;
 
 // B3-spline weights for the dilated 5-tap kernel used in À-trous wavelet filtering.
-// kern[abs(offset)] gives the 1-D coefficient; 2-D weight = kern[abs(i)] * kern[abs(j)].
 const float kern[3] = float[3](3.0/8.0, 1.0/4.0, 1.0/16.0);
 
 float luminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -21,9 +21,14 @@ void main() {
     ivec2 size  = imageSize(in_color);
     if (any(greaterThanEqual(pixel, size))) return;
 
-    vec3  p_col  = imageLoad(in_color,  pixel).rgb;
-    vec3  p_norm = imageLoad(in_normal, pixel).xyz;
-    float p_lum  = luminance(p_col);
+    vec3  p_col    = imageLoad(in_color,  pixel).rgb;
+    vec3  p_norm   = imageLoad(in_normal, pixel).xyz;
+    float p_lum    = luminance(p_col);
+
+    // albedo_lum ≈ 0 on metallic/glass surfaces (no diffuse component).
+    // Use it to tighten sigma_l so specular reflections aren't blurred out.
+    float albedo_lum = luminance(imageLoad(in_albedo, pixel).rgb);
+    float specular_scale = max(0.04, albedo_lum);  // clamp away from zero
 
     vec3  sum_c = vec3(0.0);
     float sum_w = 0.0;
@@ -40,11 +45,10 @@ void main() {
             // Edge-stopping: normal similarity (4th power for crisp boundaries)
             float w_n = pow(max(0.0, dot(p_norm, q_norm)), 4.0);
 
-            // Edge-stopping: luminance difference (scale sigma by step width so later
-            // passes with wider kernels preserve sharper features)
-            float sigma_l = 0.1 + 0.05 * float(pc.step_width);
-            float diff_l  = abs(p_lum - q_lum);
-            float w_l     = exp(-diff_l / (sigma_l + 1e-6));
+            // Edge-stopping: luminance. sigma_l is scaled down on specular surfaces
+            // so that pixels with very different radiance values don't bleed together.
+            float sigma_l = (0.1 + 0.05 * float(pc.step_width)) * specular_scale;
+            float w_l     = exp(-abs(p_lum - q_lum) / (sigma_l + 1e-6));
 
             float w = h * w_n * w_l;
             sum_c += q_col * w;

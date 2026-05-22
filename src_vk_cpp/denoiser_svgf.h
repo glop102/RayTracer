@@ -25,10 +25,12 @@ private:
     uint32_t w_ = 0, h_ = 0;
 
     VkImage color_image_  = VK_NULL_HANDLE;
+    VkImage albedo_image_ = VK_NULL_HANDLE;
     VkImage normal_image_ = VK_NULL_HANDLE;
 
     // Views over the G-buffer images owned by RtOutput.
     VkImageView color_view_  = VK_NULL_HANDLE;
+    VkImageView albedo_view_ = VK_NULL_HANDLE;
     VkImageView normal_view_ = VK_NULL_HANDLE;
 
     // Ping-pong buffers written alternately by each pass.
