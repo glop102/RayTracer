@@ -73,12 +73,16 @@ void main() {
         world_normal = normalize(T_world * nm.x + B_world * nm.y + world_normal * nm.z);
     }
 
+    vec3 emissive = mat.emissive;
+    if (mat.emissive_tex >= 0)
+        emissive *= texture(textures[nonuniformEXT(mat.emissive_tex)], uv).rgb;
+
     payload.hit        = 1;
     payload.position   = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
     payload.normal     = world_normal;
     payload.diffuse    = base_color * (1.0 - metallic);
     payload.specular   = specular;
-    payload.emissive   = mat.emissive;
+    payload.emissive   = emissive;
     payload.absorption = vec3(0.0);
     payload.roughness  = roughness;
     payload.ior        = 0.0;

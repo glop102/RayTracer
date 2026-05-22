@@ -158,10 +158,10 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
         gm.metallic   = metallic;
         gm.absorption = glm::vec3(0.0f);
         gm._pad2      = 0.0f;
-        gm.diffuse_tex  = gltf_tex_to_gpu(pbr.baseColorTexture.index);
-        gm.mr_tex       = gltf_tex_to_gpu(pbr.metallicRoughnessTexture.index);
-        gm.normal_tex   = gltf_tex_to_gpu(mat.normalTexture.index);
-        gm._pad3        = 0;
+        gm.diffuse_tex   = gltf_tex_to_gpu(pbr.baseColorTexture.index);
+        gm.mr_tex        = gltf_tex_to_gpu(pbr.metallicRoughnessTexture.index);
+        gm.normal_tex    = gltf_tex_to_gpu(mat.normalTexture.index);
+        gm.emissive_tex  = gltf_tex_to_gpu(mat.emissiveTexture.index);
         scene.materials.push_back(gm);
     }
     if (scene.materials.empty()) {
@@ -169,7 +169,7 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
         def.diffuse   = {0.8f, 0.8f, 0.8f};
         def.roughness = 0.5f;
         def.specular  = {0.04f, 0.04f, 0.04f};
-        def.diffuse_tex = def.mr_tex = def.normal_tex = -1;
+        def.diffuse_tex = def.mr_tex = def.normal_tex = def.emissive_tex = -1;
         scene.materials.push_back(def);
     }
 

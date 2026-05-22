@@ -11,7 +11,7 @@ struct GpuMaterial  {
     vec3  specular;   float ior;
     vec3  emissive;   float metallic;   // PBR metallic factor
     vec3  absorption; float _pad2;
-    int   diffuse_tex; int mr_tex; int normal_tex; int _pad3;
+    int   diffuse_tex; int mr_tex; int normal_tex; int emissive_tex;
 };
 struct InstanceData { uint mesh_idx; uint mat_idx; uint _pad[2]; };
 
