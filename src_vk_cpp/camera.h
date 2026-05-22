@@ -26,6 +26,7 @@ struct Camera {
     Camera() = default;
 
     void set_window(GLFWwindow* w) { window = w; }
+    void reset_pose(glm::vec3 p, float y, float pi) { pos = p; yaw = y; pitch = pi; moved = true; }
 
     // GLFW callback handlers — wire these up via the window user pointer.
     void on_mouse_button(int button, int action);

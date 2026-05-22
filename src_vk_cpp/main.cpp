@@ -84,11 +84,14 @@ int main(int argc, char* argv[]) {
 
         if (argc > 1) {
             // ---------------------------------------------------------- GLTF path
+            // Pull camera back so the Cornell box is fully visible from outside.
+            camera.reset_pose({0.0f, 0.5f, 4.5f}, std::numbers::pi_v<float>, -0.1f);
+
             gltf.emplace(load_gltf(ctx, argv[1]));
 
-            // +1 reserves room for the area light BLAS so later push_back
-            // doesn't reallocate and invalidate pointers stored in tlas_insts.
-            blas_list.reserve(gltf->meshes.size() + 1);
+            // Reserve for GLTF meshes + area light + 5 Cornell walls so later
+            // push_back calls don't reallocate and invalidate TlasInstance pointers.
+            blas_list.reserve(gltf->meshes.size() + 6);
 
             for (auto& mp : gltf->meshes)
                 blas_list.push_back(build_blas(ctx, *mp));
@@ -110,28 +113,47 @@ int main(int argc, char* argv[]) {
             for (auto& t : gltf->textures) tex_views.push_back(t.view);
             tex_sampler = gltf->sampler;
 
-            // Area light: 2×2 m panel above the model at Y = 3.4–3.5
-            hc_meshes.push_back(std::make_unique<Mesh>(ctx,
-                glm::vec3{-1.0f, 3.4f, -1.0f},
-                glm::vec3{ 1.0f, 3.5f,  1.0f}));
-            auto* light_mesh = hc_meshes.back().get();
-            uint32_t light_mesh_idx = (uint32_t)mesh_refs_data.size();
-            uint32_t light_mat_idx  = (uint32_t)materials_data.size();
-            uint32_t light_inst_idx = (uint32_t)inst_data.size();
+            // Helper: add a static box mesh with the given material.
+            // Appends to all relevant data structures in lock-step.
+            auto add_box = [&](glm::vec3 mn, glm::vec3 mx, GpuMaterial mat) {
+                hc_meshes.push_back(std::make_unique<Mesh>(ctx, mn, mx));
+                auto* m = hc_meshes.back().get();
+                uint32_t mesh_idx = (uint32_t)mesh_refs_data.size();
+                uint32_t mat_idx  = (uint32_t)materials_data.size();
+                uint32_t inst_idx = (uint32_t)inst_data.size();
+                blas_list.push_back(build_blas(ctx, *m));
+                mesh_refs_data.push_back({m->vertex_addr, m->index_addr});
+                meshes_by_idx.push_back(m);
+                materials_data.push_back(mat);
+                tlas_insts.push_back({&blas_list.back(), glm::mat4(1.0f), inst_idx, 0});
+                inst_data.push_back({mesh_idx, mat_idx, {0, 0}});
+                scene_insts.push_back({glm::mat4(1.0f), mesh_idx, mat_idx});
+            };
 
-            blas_list.push_back(build_blas(ctx, *light_mesh));
-            mesh_refs_data.push_back({light_mesh->vertex_addr, light_mesh->index_addr});
-            meshes_by_idx.push_back(light_mesh);
+            // Shared material helper: diffuse-only, no textures.
+            auto diffuse_mat = [](glm::vec3 col) {
+                GpuMaterial m{};
+                m.diffuse    = col;
+                m.roughness  = 1.0f;
+                m.specular   = {0.04f, 0.04f, 0.04f};
+                m.diffuse_tex = m.mr_tex = m.normal_tex = m.emissive_tex = -1;
+                return m;
+            };
 
+            // Cornell box — 5 m cube (X ±2.5, Y −1→4, Z ±2.5), open front (+Z face).
+            // Thin slabs so the inward-facing normal is the one rays hit.
+            add_box({-2.5f, -1.05f, -2.5f}, { 2.5f, -1.0f,  2.5f}, diffuse_mat({0.90f, 0.90f, 0.90f})); // floor
+            add_box({-2.5f,  4.0f,  -2.5f}, { 2.5f,  4.05f, 2.5f}, diffuse_mat({0.90f, 0.90f, 0.90f})); // ceiling
+            add_box({-2.5f, -1.0f,  -2.55f},{ 2.5f,  4.05f,-2.5f}, diffuse_mat({0.90f, 0.90f, 0.90f})); // back wall
+            add_box({-2.55f,-1.0f,  -2.5f}, {-2.5f,  4.05f, 2.5f}, diffuse_mat({0.75f, 0.10f, 0.10f})); // left wall  (red)
+            add_box({ 2.5f, -1.0f,  -2.5f}, { 2.55f, 4.05f, 2.5f}, diffuse_mat({0.10f, 0.65f, 0.10f})); // right wall (green)
+
+            // Area light: warm-white panel recessed into the ceiling.
             GpuMaterial lm{};
-            lm.emissive     = {8.0f, 7.5f, 6.5f};  // warm white, ~8 W/sr/m²
-            lm.roughness    = 1.0f;
-            lm.diffuse_tex  = lm.mr_tex = lm.normal_tex = lm.emissive_tex = -1;
-            materials_data.push_back(lm);
-
-            tlas_insts.push_back({&blas_list.back(), glm::mat4(1.0f), light_inst_idx, 0});
-            inst_data.push_back({light_mesh_idx, light_mat_idx, {0, 0}});
-            scene_insts.push_back({glm::mat4(1.0f), light_mesh_idx, light_mat_idx});
+            lm.emissive    = {8.0f, 7.5f, 6.5f};
+            lm.roughness   = 1.0f;
+            lm.diffuse_tex = lm.mr_tex = lm.normal_tex = lm.emissive_tex = -1;
+            add_box({-0.8f, 3.85f, -0.8f}, {0.8f, 3.95f, 0.8f}, lm);
 
         } else {
             // ---------------------------------------------------------- Hard-coded path
