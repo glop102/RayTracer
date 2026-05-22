@@ -54,9 +54,9 @@ int main(int argc, char* argv[]) {
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
         if (s->camera) s->camera->on_cursor_pos(x, y);
     });
-    glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int) {
+    glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int mods) {
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
-        if (key == GLFW_KEY_D && action == GLFW_PRESS && s->denoiser)
+        if (key == GLFW_KEY_D && action == GLFW_PRESS && (mods & GLFW_MOD_ALT) && s->denoiser)
             s->denoiser->enabled = !s->denoiser->enabled;
     });
     {
