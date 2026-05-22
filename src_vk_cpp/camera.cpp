@@ -46,12 +46,16 @@ void Camera::tick(float dt) {
     glm::vec3 right   = glm::normalize(glm::cross(forward, glm::vec3{0.0f, 1.0f, 0.0f}));
 
     glm::vec3 delta{0.0f};
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) delta += forward;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) delta -= forward;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) delta += right;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) delta -= right;
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) delta.y += 1.0f;
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) delta.y -= 1.0f;
+    bool alt = glfwGetKey(window, GLFW_KEY_LEFT_ALT)  == GLFW_PRESS ||
+               glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+    if (!alt) {
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) delta += forward;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) delta -= forward;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) delta += right;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) delta -= right;
+        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) delta.y += 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) delta.y -= 1.0f;
+    }
 
     if (glm::length(delta) > 0.0f) {
         pos   += glm::normalize(delta) * (MOVE_SPEED * dt);
