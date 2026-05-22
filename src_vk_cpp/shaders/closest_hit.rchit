@@ -6,7 +6,7 @@
 
 #include "hit_common.glsl"
 
-layout(set = 0, binding = 6) uniform sampler2D textures[];
+layout(set = 0, binding = 9) uniform sampler2D textures[];
 
 void main() {
     uint         iid  = gl_InstanceCustomIndexEXT;

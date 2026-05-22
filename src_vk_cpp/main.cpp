@@ -14,6 +14,7 @@
 #include "gltf_scene.h"
 #include "rt_output.h"
 #include "rt_pipeline.h"
+#include "denoiser.h"
 
 static constexpr uint32_t WIDTH  = 1280;
 static constexpr uint32_t HEIGHT = 720;
@@ -38,7 +39,7 @@ int main(int argc, char* argv[]) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan RT", nullptr, nullptr);
 
-    struct AppState { bool resize_needed = false; Camera* camera = nullptr; };
+    struct AppState { bool resize_needed = false; Camera* camera = nullptr; Denoiser* denoiser = nullptr; };
     AppState app;
     glfwSetWindowUserPointer(window, &app);
 
@@ -52,6 +53,11 @@ int main(int argc, char* argv[]) {
     glfwSetCursorPosCallback(window, [](GLFWwindow* w, double x, double y) {
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
         if (s->camera) s->camera->on_cursor_pos(x, y);
+    });
+    glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int) {
+        auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
+        if (key == GLFW_KEY_D && action == GLFW_PRESS && s->denoiser)
+            s->denoiser->enabled = !s->denoiser->enabled;
     });
     {
         VkContext ctx{window};
@@ -241,6 +247,12 @@ int main(int argc, char* argv[]) {
         RtOutput   rt_output  {ctx, swapchain.extent, tlas.handle, ssbos, tex_views, tex_sampler};
         RtPipeline rt_pipeline{ctx, rt_output.descriptor_set_layout};
 
+        Denoiser denoiser;
+        denoiser.setup(swapchain.extent.width, swapchain.extent.height,
+            rt_output.color_staging_ptr, rt_output.albedo_staging_ptr,
+            rt_output.normal_staging_ptr, rt_output.output_staging_ptr);
+        app.denoiser = &denoiser;
+
         // ================================================================
         // Frame loop
         // ================================================================
@@ -265,10 +277,93 @@ int main(int argc, char* argv[]) {
                 vkDeviceWaitIdle(ctx.device.device);
                 swapchain.recreate(ctx, static_cast<uint32_t>(fw), static_cast<uint32_t>(fh));
                 rt_output.recreate(ctx, swapchain.extent, tlas.handle);
+                denoiser.setup(swapchain.extent.width, swapchain.extent.height,
+                    rt_output.color_staging_ptr, rt_output.albedo_staging_ptr,
+                    rt_output.normal_staging_ptr, rt_output.output_staging_ptr);
                 frame_index = 0;
                 continue;
             }
 
+            if (camera.consume_moved()) frame_index = 0;
+
+            // ----------------------------------------------------------
+            // Phase 1: trace rays + copy images to host-visible staging
+            // ----------------------------------------------------------
+            {
+                VkCommandBuffer cmd1 = ctx.begin_one_shot();
+
+                vkCmdBindPipeline(cmd1, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline.pipeline);
+                RtCameraPush push   = camera.rt_push(swapchain.extent);
+                push.frame_index    = frame_index++;
+                push.num_light_tris = scene_data.light_count;
+                vkCmdPushConstants(cmd1, rt_pipeline.layout,
+                                   VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(push), &push);
+                vkCmdBindDescriptorSets(cmd1, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                                        rt_pipeline.layout, 0, 1, &rt_output.descriptor_set, 0, nullptr);
+
+                ctx.pfn_vkCmdTraceRaysKHR(cmd1,
+                    &rt_pipeline.raygen_region,
+                    &rt_pipeline.miss_region,
+                    &rt_pipeline.hit_region,
+                    &rt_pipeline.callable_region,
+                    swapchain.extent.width, swapchain.extent.height, 1);
+
+                // Transition colour, albedo, normal: GENERAL → TRANSFER_SRC_OPTIMAL
+                VkImageMemoryBarrier readback_barriers[3]{};
+                auto setup_rb = [](VkImageMemoryBarrier& b, VkImage img) {
+                    b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    b.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+                    b.dstAccessMask    = VK_ACCESS_TRANSFER_READ_BIT;
+                    b.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
+                    b.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    b.image            = img;
+                    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                };
+                setup_rb(readback_barriers[0], rt_output.image);
+                setup_rb(readback_barriers[1], rt_output.albedo_image);
+                setup_rb(readback_barriers[2], rt_output.normal_image);
+                vkCmdPipelineBarrier(cmd1,
+                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, 0, nullptr, 0, nullptr, 3, readback_barriers);
+
+                VkBufferImageCopy region{};
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent      = {swapchain.extent.width, swapchain.extent.height, 1};
+                vkCmdCopyImageToBuffer(cmd1, rt_output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    rt_output.color_staging_buf,  1, &region);
+                vkCmdCopyImageToBuffer(cmd1, rt_output.albedo_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    rt_output.albedo_staging_buf, 1, &region);
+                vkCmdCopyImageToBuffer(cmd1, rt_output.normal_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    rt_output.normal_staging_buf, 1, &region);
+
+                // Transition back to GENERAL for the next frame's raygen
+                for (auto& b : readback_barriers) {
+                    b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    b.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                    b.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    b.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                }
+                vkCmdPipelineBarrier(cmd1,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                    0, 0, nullptr, 0, nullptr, 3, readback_barriers);
+
+                ctx.end_one_shot(cmd1);  // submits + vkQueueWaitIdle
+            }
+
+            // ----------------------------------------------------------
+            // Phase 2: OIDN denoising (CPU)
+            // ----------------------------------------------------------
+            if (denoiser.enabled) {
+                vmaInvalidateAllocation(ctx.allocator, rt_output.color_staging_alloc,  0, VK_WHOLE_SIZE);
+                vmaInvalidateAllocation(ctx.allocator, rt_output.albedo_staging_alloc, 0, VK_WHOLE_SIZE);
+                vmaInvalidateAllocation(ctx.allocator, rt_output.normal_staging_alloc, 0, VK_WHOLE_SIZE);
+                denoiser.execute();
+                vmaFlushAllocation(ctx.allocator, rt_output.output_staging_alloc, 0, VK_WHOLE_SIZE);
+            }
+
+            // ----------------------------------------------------------
+            // Phase 3: upload denoised result and present
+            // ----------------------------------------------------------
             auto frame_opt = frame_sync.acquire(swapchain.handle);
             if (!frame_opt) { app.resize_needed = true; continue; }
             auto [image_index, cmd] = *frame_opt;
@@ -277,53 +372,70 @@ int main(int argc, char* argv[]) {
             if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
                 throw std::runtime_error("Failed to begin command buffer");
 
-            if (camera.consume_moved()) frame_index = 0;
+            if (denoiser.enabled) {
+                // Upload denoised output → display_image, then blit to swapchain.
+                image_barrier(cmd, rt_output.display_image,
+                    0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline.pipeline);
-            RtCameraPush push   = camera.rt_push(swapchain.extent);
-            push.frame_index    = frame_index++;
-            push.num_light_tris = scene_data.light_count;
-            vkCmdPushConstants(cmd, rt_pipeline.layout,
-                               VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(push), &push);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
-                                    rt_pipeline.layout, 0, 1, &rt_output.descriptor_set, 0, nullptr);
+                VkBufferImageCopy region{};
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent      = {swapchain.extent.width, swapchain.extent.height, 1};
+                vkCmdCopyBufferToImage(cmd, rt_output.output_staging_buf, rt_output.display_image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-            ctx.pfn_vkCmdTraceRaysKHR(cmd,
-                &rt_pipeline.raygen_region,
-                &rt_pipeline.miss_region,
-                &rt_pipeline.hit_region,
-                &rt_pipeline.callable_region,
-                swapchain.extent.width, swapchain.extent.height, 1);
+                image_barrier(cmd, rt_output.display_image,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-            image_barrier(cmd, rt_output.image,
-                VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                image_barrier(cmd, swapchain.images[image_index],
+                    0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-            image_barrier(cmd, swapchain.images[image_index],
-                0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                VkImageBlit blit{};
+                blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                blit.srcOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
+                blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                blit.dstOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
+                vkCmdBlitImage(cmd,
+                    rt_output.display_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    swapchain.images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1, &blit, VK_FILTER_NEAREST);
+            } else {
+                // Blit raw accumulation image directly to swapchain.
+                image_barrier(cmd, rt_output.image,
+                    VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-            VkImageBlit blit{};
-            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            blit.srcOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
-            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            blit.dstOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
-            vkCmdBlitImage(cmd,
-                rt_output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                swapchain.images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                1, &blit, VK_FILTER_NEAREST);
+                image_barrier(cmd, swapchain.images[image_index],
+                    0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+                VkImageBlit blit{};
+                blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                blit.srcOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
+                blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                blit.dstOffsets[1]  = {(int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1};
+                vkCmdBlitImage(cmd,
+                    rt_output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    swapchain.images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1, &blit, VK_FILTER_NEAREST);
+
+                image_barrier(cmd, rt_output.image,
+                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+            }
 
             image_barrier(cmd, swapchain.images[image_index],
                 VK_ACCESS_TRANSFER_WRITE_BIT, 0,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-
-            image_barrier(cmd, rt_output.image,
-                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
 
             if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
                 throw std::runtime_error("Failed to end command buffer");

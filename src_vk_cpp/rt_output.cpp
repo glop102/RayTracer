@@ -16,15 +16,20 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     tex_views_ = {tex_views.begin(), tex_views.end()};
     sampler_   = sampler;
 
-    uint32_t num_ssbos   = static_cast<uint32_t>(ssbos_.size());
-    uint32_t num_tex     = static_cast<uint32_t>(tex_views_.size());
-    uint32_t tex_binding = 2 + num_ssbos;
-    // max_tex: upper bound declared in the layout (variable count at alloc time).
-    // Must be at least 1 so the binding is valid; the actual allocated count can be 0.
+    uint32_t num_ssbos = static_cast<uint32_t>(ssbos_.size());
+    uint32_t num_tex   = static_cast<uint32_t>(tex_views_.size());
+
+    // Binding numbers (must match shader hardcoded values).
+    // SSBOs occupy [2 .. 2+num_ssbos-1].  G-buffer images follow with a 1-slot gap,
+    // then the variable-count texture array at the highest binding.
+    uint32_t bind_albedo = 2 + num_ssbos + 1;  // = 7 with 4 SSBOs
+    uint32_t bind_normal = 2 + num_ssbos + 2;  // = 8
+    uint32_t bind_tex    = 2 + num_ssbos + 3;  // = 9
     static constexpr uint32_t MAX_TEX = 65536;
 
     // ------------------------------------------------------------------ Descriptor set layout
-    uint32_t total_bindings = tex_binding + 1;  // includes the texture array slot
+    // Array entries: 1 TLAS + 1 colour image + N SSBOs + 2 G-buffer images + 1 texture array.
+    uint32_t total_bindings = 2 + num_ssbos + 3;
     std::vector<VkDescriptorSetLayoutBinding> bindings(total_bindings);
 
     bindings[0].binding         = 0;
@@ -45,16 +50,29 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
                                           VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     }
 
-    // Texture array: variable count, partially bound (safe even when num_tex == 0).
-    bindings[tex_binding].binding         = tex_binding;
-    bindings[tex_binding].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[tex_binding].descriptorCount = MAX_TEX;
-    bindings[tex_binding].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    uint32_t ai_albedo = 2 + num_ssbos;     // array index for albedo entry
+    uint32_t ai_normal = 2 + num_ssbos + 1; // array index for normal entry
+    uint32_t ai_tex    = 2 + num_ssbos + 2; // array index for texture array entry
 
-    // Flags: only the last binding (texture array) needs VARIABLE | PARTIALLY_BOUND.
+    bindings[ai_albedo].binding         = bind_albedo;
+    bindings[ai_albedo].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[ai_albedo].descriptorCount = 1;
+    bindings[ai_albedo].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    bindings[ai_normal].binding         = bind_normal;
+    bindings[ai_normal].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[ai_normal].descriptorCount = 1;
+    bindings[ai_normal].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    // Texture array: variable count, partially bound, highest binding number.
+    bindings[ai_tex].binding         = bind_tex;
+    bindings[ai_tex].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[ai_tex].descriptorCount = MAX_TEX;
+    bindings[ai_tex].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
     std::vector<VkDescriptorBindingFlags> binding_flags(total_bindings, 0);
-    binding_flags[tex_binding] = VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
-                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    binding_flags[ai_tex] = VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+                            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{};
     flags_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
@@ -72,7 +90,7 @@ RtOutput::RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR
     // ------------------------------------------------------------------ Descriptor pool
     std::vector<VkDescriptorPoolSize> pool_sizes;
     pool_sizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1});
-    pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              1});
+    pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              3}); // colour + albedo + normal
     if (num_ssbos > 0)
         pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, num_ssbos});
     if (num_tex > 0)
@@ -118,7 +136,8 @@ void RtOutput::recreate(VkContext& ctx, VkExtent2D extent, VkAccelerationStructu
     write_descriptors(tlas);
 }
 
-void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
+static VkImage create_storage_image(VkContext& ctx, VkExtent2D extent,
+                                    VmaAllocation& out_alloc, VkImageView& out_view) {
     VkImageCreateInfo img_ci{};
     img_ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_ci.imageType     = VK_IMAGE_TYPE_2D;
@@ -135,37 +154,141 @@ void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
     img_ai.usage = VMA_MEMORY_USAGE_AUTO;
     img_ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
-    if (vmaCreateImage(ctx.allocator, &img_ci, &img_ai, &image, &alloc, nullptr) != VK_SUCCESS)
+    VkImage new_image;
+    if (vmaCreateImage(ctx.allocator, &img_ci, &img_ai, &new_image, &out_alloc, nullptr) != VK_SUCCESS)
         throw std::runtime_error("RT storage image creation failed");
 
     VkImageViewCreateInfo view_ci{};
     view_ci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_ci.image            = image;
+    view_ci.image            = new_image;
     view_ci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
     view_ci.format           = STORAGE_FORMAT;
     view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(device, &view_ci, nullptr, &view) != VK_SUCCESS)
+    if (vkCreateImageView(ctx.device.device, &view_ci, nullptr, &out_view) != VK_SUCCESS)
         throw std::runtime_error("RT storage image view creation failed");
 
+    return new_image;
+}
+
+static VkBuffer create_staging(VkContext& ctx, VkExtent2D extent,
+                                VkBufferUsageFlags usage,
+                                VmaAllocation& out_alloc, void*& out_ptr) {
+    VkBufferCreateInfo buf_ci{};
+    buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buf_ci.size  = (VkDeviceSize)extent.width * extent.height * 16;  // RGBA32F
+    buf_ci.usage = usage;
+
+    VmaAllocationCreateInfo alloc_ci{};
+    alloc_ci.usage = VMA_MEMORY_USAGE_AUTO;
+    alloc_ci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VmaAllocationInfo alloc_info{};
+    VkBuffer buf;
+    if (vmaCreateBuffer(ctx.allocator, &buf_ci, &alloc_ci, &buf, &out_alloc, &alloc_info) != VK_SUCCESS)
+        throw std::runtime_error("RT staging buffer creation failed");
+    out_ptr = alloc_info.pMappedData;
+    return buf;
+}
+
+void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
+    // Accumulation image
+    image = create_storage_image(ctx, extent, alloc, view);
+
+    // G-buffer images
+    albedo_image = create_storage_image(ctx, extent, albedo_alloc, albedo_view);
+    normal_image = create_storage_image(ctx, extent, normal_alloc, normal_view);
+
+    // Display image: TRANSFER_DST + TRANSFER_SRC only (no storage shader access)
+    {
+        VkImageCreateInfo img_ci{};
+        img_ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_ci.imageType     = VK_IMAGE_TYPE_2D;
+        img_ci.format        = STORAGE_FORMAT;
+        img_ci.extent        = {extent.width, extent.height, 1};
+        img_ci.mipLevels     = 1;
+        img_ci.arrayLayers   = 1;
+        img_ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+        img_ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VmaAllocationCreateInfo img_ai{};
+        img_ai.usage = VMA_MEMORY_USAGE_AUTO;
+        img_ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        if (vmaCreateImage(ctx.allocator, &img_ci, &img_ai, &display_image, &display_alloc, nullptr) != VK_SUCCESS)
+            throw std::runtime_error("Display image creation failed");
+    }
+
+    // Staging buffers
+    color_staging_buf  = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                        color_staging_alloc,  color_staging_ptr);
+    albedo_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                        albedo_staging_alloc, albedo_staging_ptr);
+    normal_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                        normal_staging_alloc, normal_staging_ptr);
+    output_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                        output_staging_alloc, output_staging_ptr);
+
+    // Transition accumulation and G-buffer images to GENERAL
     VkCommandBuffer cmd = ctx.begin_one_shot();
 
-    VkImageMemoryBarrier barrier{};
-    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.srcAccessMask       = 0;
-    barrier.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.image               = image;
-    barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    auto transition = [&](VkImage img) {
+        VkImageMemoryBarrier b{};
+        b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.srcAccessMask       = 0;
+        b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+        b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+        b.image               = img;
+        b.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+            0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    transition(image);
+    transition(albedo_image);
+    transition(normal_image);
 
     ctx.end_one_shot(cmd);
 }
 
 void RtOutput::destroy_image() {
+    // Staging buffers
+    if (color_staging_buf  != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, color_staging_buf,  color_staging_alloc);
+        color_staging_buf  = VK_NULL_HANDLE;  color_staging_ptr  = nullptr;
+    }
+    if (albedo_staging_buf != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, albedo_staging_buf, albedo_staging_alloc);
+        albedo_staging_buf = VK_NULL_HANDLE;  albedo_staging_ptr = nullptr;
+    }
+    if (normal_staging_buf != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, normal_staging_buf, normal_staging_alloc);
+        normal_staging_buf = VK_NULL_HANDLE;  normal_staging_ptr = nullptr;
+    }
+    if (output_staging_buf != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, output_staging_buf, output_staging_alloc);
+        output_staging_buf = VK_NULL_HANDLE;  output_staging_ptr = nullptr;
+    }
+
+    // Display image
+    if (display_image != VK_NULL_HANDLE) {
+        vmaDestroyImage(allocator, display_image, display_alloc);
+        display_image = VK_NULL_HANDLE;
+    }
+
+    // G-buffer images
+    if (albedo_view  != VK_NULL_HANDLE) vkDestroyImageView(device, albedo_view, nullptr);
+    if (albedo_image != VK_NULL_HANDLE) vmaDestroyImage(allocator, albedo_image, albedo_alloc);
+    albedo_view = VK_NULL_HANDLE;  albedo_image = VK_NULL_HANDLE;
+
+    if (normal_view  != VK_NULL_HANDLE) vkDestroyImageView(device, normal_view, nullptr);
+    if (normal_image != VK_NULL_HANDLE) vmaDestroyImage(allocator, normal_image, normal_alloc);
+    normal_view = VK_NULL_HANDLE;  normal_image = VK_NULL_HANDLE;
+
+    // Accumulation image
     if (view  != VK_NULL_HANDLE) vkDestroyImageView(device, view, nullptr);
     if (image != VK_NULL_HANDLE) vmaDestroyImage(allocator, image, alloc);
     view  = VK_NULL_HANDLE;
@@ -173,8 +296,13 @@ void RtOutput::destroy_image() {
 }
 
 void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
+    uint32_t num_ssbos   = static_cast<uint32_t>(ssbos_.size());
+    uint32_t bind_albedo = 2 + num_ssbos + 1;
+    uint32_t bind_normal = 2 + num_ssbos + 2;
+    uint32_t bind_tex    = 2 + num_ssbos + 3;
+
     std::vector<VkWriteDescriptorSet> writes;
-    writes.reserve(2 + ssbos_.size());
+    writes.reserve(5 + ssbos_.size());
 
     // Binding 0: TLAS
     VkWriteDescriptorSetAccelerationStructureKHR as_write{};
@@ -190,20 +318,20 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     w0.descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     writes.push_back(w0);
 
-    // Binding 1: storage image
-    VkDescriptorImageInfo img_info{};
-    img_info.imageView   = view;
-    img_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    // Binding 1: colour accumulation storage image
+    VkDescriptorImageInfo color_info{};
+    color_info.imageView   = view;
+    color_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkWriteDescriptorSet w1{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w1.dstSet          = descriptor_set;
     w1.dstBinding      = 1;
     w1.descriptorCount = 1;
     w1.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    w1.pImageInfo      = &img_info;
+    w1.pImageInfo      = &color_info;
     writes.push_back(w1);
 
-    // Bindings 2+: SSBOs — buf_infos must outlive the loop that builds writes.
+    // Bindings 2+: SSBOs
     std::vector<VkDescriptorBufferInfo> buf_infos;
     buf_infos.reserve(ssbos_.size());
     for (const auto& s : ssbos_)
@@ -219,8 +347,33 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
         writes.push_back(w);
     }
 
-    // Texture array (binding 2+N): one entry per texture.
-    uint32_t tex_binding = 2 + static_cast<uint32_t>(ssbos_.size());
+    // Binding bind_albedo: albedo G-buffer storage image
+    VkDescriptorImageInfo albedo_info{};
+    albedo_info.imageView   = albedo_view;
+    albedo_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet wa{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wa.dstSet          = descriptor_set;
+    wa.dstBinding      = bind_albedo;
+    wa.descriptorCount = 1;
+    wa.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    wa.pImageInfo      = &albedo_info;
+    writes.push_back(wa);
+
+    // Binding bind_normal: normal G-buffer storage image
+    VkDescriptorImageInfo normal_info{};
+    normal_info.imageView   = normal_view;
+    normal_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet wn{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wn.dstSet          = descriptor_set;
+    wn.dstBinding      = bind_normal;
+    wn.descriptorCount = 1;
+    wn.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    wn.pImageInfo      = &normal_info;
+    writes.push_back(wn);
+
+    // Texture array (bind_tex): one entry per texture.
     std::vector<VkDescriptorImageInfo> img_infos;
     if (!tex_views_.empty() && sampler_ != VK_NULL_HANDLE) {
         img_infos.reserve(tex_views_.size());
@@ -229,7 +382,7 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
 
         VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         w.dstSet          = descriptor_set;
-        w.dstBinding      = tex_binding;
+        w.dstBinding      = bind_tex;
         w.descriptorCount = static_cast<uint32_t>(img_infos.size());
         w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w.pImageInfo      = img_infos.data();

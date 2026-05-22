@@ -67,6 +67,7 @@
                 glfw
                 glm
                 tinygltf
+                openimagedenoise
                 gnumake
                 gcc
               ];

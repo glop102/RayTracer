@@ -35,6 +35,7 @@ final: prev: {
       glfw
       glm
       tinygltf
+      openimagedenoise
     ];
 
     makeFlags = [
