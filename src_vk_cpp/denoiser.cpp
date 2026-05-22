@@ -15,6 +15,7 @@ void Denoiser::setup(uint32_t w, uint32_t h,
     filter_.setImage("normal", normal_ptr, oidn::Format::Float3, w, h, 0, 16);
     filter_.setImage("output", output_ptr, oidn::Format::Float3, w, h, 0, 16);
     filter_.set("hdr", true);
+    filter_.set("quality", oidn::Quality::Balanced);
     filter_.commit();
 }
 
