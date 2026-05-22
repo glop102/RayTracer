@@ -6,7 +6,7 @@ LDFLAGS  := $(shell pkg-config --libs glfw3 vulkan shaderc) -lvk-bootstrap -lOpe
 
 SRCS   := main.cpp vk_context.cpp swapchain.cpp frame_sync.cpp mesh.cpp camera.cpp \
           accel.cpp gpu_buffer.cpp gpu_texture.cpp scene_data.cpp gltf_scene.cpp \
-          rt_output.cpp rt_pipeline.cpp pipeline.cpp render_pass.cpp denoiser.cpp
+          rt_output.cpp rt_pipeline.cpp pipeline.cpp render_pass.cpp denoiser.cpp denoiser_oidn.cpp
 OBJS   := $(SRCS:.cpp=.o)
 TARGET := raytracer_vk
 

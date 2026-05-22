@@ -170,27 +170,6 @@ static VkImage create_storage_image(VkContext& ctx, VkExtent2D extent,
     return new_image;
 }
 
-static VkBuffer create_staging(VkContext& ctx, VkExtent2D extent,
-                                VkBufferUsageFlags usage,
-                                VmaAllocation& out_alloc, void*& out_ptr) {
-    VkBufferCreateInfo buf_ci{};
-    buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buf_ci.size  = (VkDeviceSize)extent.width * extent.height * 16;  // RGBA32F
-    buf_ci.usage = usage;
-
-    VmaAllocationCreateInfo alloc_ci{};
-    alloc_ci.usage = VMA_MEMORY_USAGE_AUTO;
-    alloc_ci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-    VmaAllocationInfo alloc_info{};
-    VkBuffer buf;
-    if (vmaCreateBuffer(ctx.allocator, &buf_ci, &alloc_ci, &buf, &out_alloc, &alloc_info) != VK_SUCCESS)
-        throw std::runtime_error("RT staging buffer creation failed");
-    out_ptr = alloc_info.pMappedData;
-    return buf;
-}
-
 void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
     // Accumulation image
     image = create_storage_image(ctx, extent, alloc, view);
@@ -198,37 +177,6 @@ void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
     // G-buffer images
     albedo_image = create_storage_image(ctx, extent, albedo_alloc, albedo_view);
     normal_image = create_storage_image(ctx, extent, normal_alloc, normal_view);
-
-    // Display image: TRANSFER_DST + TRANSFER_SRC only (no storage shader access)
-    {
-        VkImageCreateInfo img_ci{};
-        img_ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        img_ci.imageType     = VK_IMAGE_TYPE_2D;
-        img_ci.format        = STORAGE_FORMAT;
-        img_ci.extent        = {extent.width, extent.height, 1};
-        img_ci.mipLevels     = 1;
-        img_ci.arrayLayers   = 1;
-        img_ci.samples       = VK_SAMPLE_COUNT_1_BIT;
-        img_ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        VmaAllocationCreateInfo img_ai{};
-        img_ai.usage = VMA_MEMORY_USAGE_AUTO;
-        img_ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-        if (vmaCreateImage(ctx.allocator, &img_ci, &img_ai, &display_image, &display_alloc, nullptr) != VK_SUCCESS)
-            throw std::runtime_error("Display image creation failed");
-    }
-
-    // Staging buffers
-    color_staging_buf  = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                        color_staging_alloc,  color_staging_ptr);
-    albedo_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                        albedo_staging_alloc, albedo_staging_ptr);
-    normal_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                        normal_staging_alloc, normal_staging_ptr);
-    output_staging_buf = create_staging(ctx, extent, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                        output_staging_alloc, output_staging_ptr);
 
     // Transition accumulation and G-buffer images to GENERAL
     VkCommandBuffer cmd = ctx.begin_one_shot();
@@ -255,30 +203,6 @@ void RtOutput::create_image(VkContext& ctx, VkExtent2D extent) {
 }
 
 void RtOutput::destroy_image() {
-    // Staging buffers
-    if (color_staging_buf  != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, color_staging_buf,  color_staging_alloc);
-        color_staging_buf  = VK_NULL_HANDLE;  color_staging_ptr  = nullptr;
-    }
-    if (albedo_staging_buf != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, albedo_staging_buf, albedo_staging_alloc);
-        albedo_staging_buf = VK_NULL_HANDLE;  albedo_staging_ptr = nullptr;
-    }
-    if (normal_staging_buf != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, normal_staging_buf, normal_staging_alloc);
-        normal_staging_buf = VK_NULL_HANDLE;  normal_staging_ptr = nullptr;
-    }
-    if (output_staging_buf != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, output_staging_buf, output_staging_alloc);
-        output_staging_buf = VK_NULL_HANDLE;  output_staging_ptr = nullptr;
-    }
-
-    // Display image
-    if (display_image != VK_NULL_HANDLE) {
-        vmaDestroyImage(allocator, display_image, display_alloc);
-        display_image = VK_NULL_HANDLE;
-    }
-
     // G-buffer images
     if (albedo_view  != VK_NULL_HANDLE) vkDestroyImageView(device, albedo_view, nullptr);
     if (albedo_image != VK_NULL_HANDLE) vmaDestroyImage(allocator, albedo_image, albedo_alloc);

@@ -7,9 +7,8 @@
 
 struct VkContext;
 
-// Owns the RGBA32F accumulation image, two G-buffer images (albedo, normal),
-// a display image for the denoised result, four host-visible staging buffers,
-// and the descriptor pool/set that binds:
+// Owns the RGBA32F accumulation image and two G-buffer images (albedo, normal),
+// plus the descriptor pool/set that binds:
 //   binding 0        : TLAS                              (raygen)
 //   binding 1        : storage image — colour accum      (raygen)
 //   binding 2 .. 2+N : SSBOs from caller                 (raygen | closest-hit)
@@ -27,7 +26,7 @@ struct RtOutput {
     VmaAllocation alloc = {};
     VkImageView   view  = VK_NULL_HANDLE;
 
-    // G-buffer storage images (written by raygen, read back to CPU for OIDN)
+    // G-buffer storage images (written by raygen; read by the active denoiser)
     VkImage       albedo_image = VK_NULL_HANDLE;
     VmaAllocation albedo_alloc = {};
     VkImageView   albedo_view  = VK_NULL_HANDLE;
@@ -35,27 +34,6 @@ struct RtOutput {
     VkImage       normal_image = VK_NULL_HANDLE;
     VmaAllocation normal_alloc = {};
     VkImageView   normal_view  = VK_NULL_HANDLE;
-
-    // Display image: receives OIDN output; blit to swapchain (no storage binding needed)
-    VkImage       display_image = VK_NULL_HANDLE;
-    VmaAllocation display_alloc = {};
-
-    // Persistently-mapped host-visible staging buffers (size = W×H×16 bytes, RGBA32F)
-    VkBuffer      color_staging_buf   = VK_NULL_HANDLE;
-    VmaAllocation color_staging_alloc = {};
-    void*         color_staging_ptr   = nullptr;
-
-    VkBuffer      albedo_staging_buf   = VK_NULL_HANDLE;
-    VmaAllocation albedo_staging_alloc = {};
-    void*         albedo_staging_ptr   = nullptr;
-
-    VkBuffer      normal_staging_buf   = VK_NULL_HANDLE;
-    VmaAllocation normal_staging_alloc = {};
-    void*         normal_staging_ptr   = nullptr;
-
-    VkBuffer      output_staging_buf   = VK_NULL_HANDLE;
-    VmaAllocation output_staging_alloc = {};
-    void*         output_staging_ptr   = nullptr;
 
     RtOutput(VkContext& ctx, VkExtent2D extent, VkAccelerationStructureKHR tlas,
              std::span<const GpuBuffer> ssbos,
