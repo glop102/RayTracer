@@ -18,11 +18,14 @@
 
 VkContext::VkContext(GLFWwindow* window) {
     // ------------------------------------------------------------------ Instance
+    uint32_t    glfw_ext_count = 0;
+    const char** glfw_exts    = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
     auto inst_ret = vkb::InstanceBuilder{}
         .set_app_name("vulkan-rt")
         .request_validation_layers()
         .use_default_debug_messenger()
         .require_api_version(1, 2, 0)
+        .enable_extensions(glfw_ext_count, glfw_exts)
         .build();
     if (!inst_ret)
         throw std::runtime_error("Instance creation failed: " + inst_ret.error().message());

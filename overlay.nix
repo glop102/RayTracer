@@ -64,7 +64,8 @@ final: prev: {
     postInstall = ''
       wrapProgram $out/bin/raytracer_vk \
         --set ROCM_PATH ${final.rocmPackages.clr} \
-        --prefix LD_LIBRARY_PATH : ${final.rocmPackages.clr}/lib
+        --prefix LD_LIBRARY_PATH : ${final.rocmPackages.clr}/lib \
+        --run 'for _d in /run/opengl-driver/lib "/usr/lib/$(uname -m)-linux-gnu" /usr/lib64 /usr/lib; do [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:$LD_LIBRARY_PATH"; done'
     '';
 
     meta = {
