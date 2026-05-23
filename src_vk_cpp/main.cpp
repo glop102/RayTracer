@@ -106,8 +106,8 @@ int main(int argc, char* argv[]) {
             // push_back calls don't reallocate and invalidate TlasInstance pointers.
             blas_list.reserve(gltf->meshes.size() + 6);
 
-            for (auto& mp : gltf->meshes)
-                blas_list.push_back(build_blas(ctx, *mp));
+            for (size_t i = 0; i < gltf->meshes.size(); i++)
+                blas_list.push_back(build_blas(ctx, *gltf->meshes[i], !gltf->mesh_is_glass[i]));
 
             for (size_t i = 0; i < gltf->instances.size(); i++) {
                 auto& gi = gltf->instances[i];

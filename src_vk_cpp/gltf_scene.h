@@ -21,6 +21,7 @@ struct GltfInstance {
 // Call destroy() before the VkContext is torn down.
 struct LoadedScene {
     std::vector<std::unique_ptr<Mesh>> meshes;
+    std::vector<bool>                  mesh_is_glass;  // parallel to meshes; true → non-opaque BLAS
     std::vector<GpuMaterial>           materials;
     std::vector<GltfInstance>          instances;
     std::vector<GpuTexture>            textures;

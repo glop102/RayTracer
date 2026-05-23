@@ -135,6 +135,7 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
     };
 
     // ------------------------------------------------------------------ Materials
+    std::vector<bool> mat_is_glass;
     for (const auto& mat : model.materials) {
         const auto& pbr   = mat.pbrMetallicRoughness;
         glm::vec3 base_col = {(float)pbr.baseColorFactor[0],
@@ -146,14 +147,35 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
                               (float)mat.emissiveFactor[1],
                               (float)mat.emissiveFactor[2]};
 
+        // KHR_materials_transmission: transmissionFactor > 0 → treat as glass
+        float transmission = 0.0f;
+        auto trans_it = mat.extensions.find("KHR_materials_transmission");
+        if (trans_it != mat.extensions.end()) {
+            const auto& ext = trans_it->second;
+            if (ext.IsObject() && ext.Has("transmissionFactor"))
+                transmission = (float)ext.Get("transmissionFactor").GetNumberAsDouble();
+        }
+
+        // KHR_materials_ior: physical IOR (default 1.5 for glass)
+        float ior_val = 0.0f;
+        if (transmission > 0.0f) {
+            ior_val = 1.5f;
+            auto ior_it = mat.extensions.find("KHR_materials_ior");
+            if (ior_it != mat.extensions.end()) {
+                const auto& ext = ior_it->second;
+                if (ext.IsObject() && ext.Has("ior"))
+                    ior_val = (float)ext.Get("ior").GetNumberAsDouble();
+            }
+        }
+
         // Pre-compute PBR F0 = mix(0.04, baseColor, metallic)
         glm::vec3 F0 = glm::mix(glm::vec3(0.04f), base_col, metallic);
 
         GpuMaterial gm{};
-        gm.diffuse    = base_col;            // base colour factor; shader multiplies by (1-metallic)
+        gm.diffuse    = base_col;
         gm.roughness  = roughness;
-        gm.specular   = F0;                  // pre-computed for the no-MR-texture path
-        gm.ior        = 0.0f;
+        gm.specular   = F0;
+        gm.ior        = ior_val;
         gm.emissive   = emissive;
         gm.metallic   = metallic;
         gm.absorption = glm::vec3(0.0f);
@@ -163,6 +185,7 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
         gm.normal_tex    = gltf_tex_to_gpu(mat.normalTexture.index);
         gm.emissive_tex  = gltf_tex_to_gpu(mat.emissiveTexture.index);
         scene.materials.push_back(gm);
+        mat_is_glass.push_back(transmission > 0.0f);
     }
     if (scene.materials.empty()) {
         GpuMaterial def{};
@@ -241,6 +264,8 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
         }
     }
 
+    scene.mesh_is_glass.assign(scene.meshes.size(), false);
+
     // ------------------------------------------------------------------ Nodes
     if (model.scenes.empty()) throw std::runtime_error("GLTF has no scenes");
     const auto& gltf_scene = model.scenes[model.defaultScene >= 0 ? model.defaultScene : 0];
@@ -286,7 +311,9 @@ LoadedScene load_gltf(VkContext& ctx, const std::string& path) {
                 if (it == prim_to_gpu.end()) continue;
                 int mat_idx = gm.primitives[pi].material;
                 if (mat_idx < 0) mat_idx = 0;
-                scene.instances.push_back({it->second, (uint32_t)mat_idx, world, 0u});
+                bool is_glass = mat_idx < (int)mat_is_glass.size() && mat_is_glass[mat_idx];
+                if (is_glass) scene.mesh_is_glass[it->second] = true;
+                scene.instances.push_back({it->second, (uint32_t)mat_idx, world, is_glass ? 1u : 0u});
             }
         }
         for (int child : node.children) traverse(child, world);
