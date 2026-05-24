@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -383,29 +384,28 @@ int main(int argc, char* argv[]) {
                     screenshot.active = false;
                     screenshot.resolve(ctx);
 
-                    VkImage       save_image  = rt_output.image;
+                    // Color image after resolve: ss_image for custom-res, rt_output for same-res
+                    VkImage       save_image  = screenshot.custom_res ? screenshot.ss_image : rt_output.image;
                     VkImageLayout save_layout = VK_IMAGE_LAYOUT_GENERAL;
 
-                    if (screenshot.custom_res) {
-                        // Custom resolution: denoisers are swapchain-sized, skip them.
-                        save_image  = screenshot.ss_image;
-                        save_layout = VK_IMAGE_LAYOUT_GENERAL;
-                    } else {
-                        IDenoiser* active_denoiser = nullptr;
-                        if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
-                        else if (app.denoiser_mode == DenoiserMode::SVGF) active_denoiser = &svgf_denoiser;
-
-                        if (active_denoiser) {
-                            VkCommandBuffer dcmd = ctx.begin_one_shot();
-                            active_denoiser->record_pre(dcmd);
-                            ctx.end_one_shot(dcmd);
-                            active_denoiser->execute();
-                            VkCommandBuffer dcmd2 = ctx.begin_one_shot();
-                            active_denoiser->record_post(dcmd2);
-                            ctx.end_one_shot(dcmd2);
-                            save_image  = active_denoiser->output_image();
-                            save_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                        }
+                    // OIDN denoising: spin up a temporary instance at screenshot resolution,
+                    // guided by the G-buffer images the HQ raygen wrote into.
+                    // SVGF is temporal and cannot be applied to a single accumulated frame.
+                    std::unique_ptr<OidnDenoiser> ss_oidn;
+                    if (app.denoiser_mode == DenoiserMode::OIDN) {
+                        ss_oidn = std::make_unique<OidnDenoiser>();
+                        ss_oidn->setup(ctx, screenshot.ss_width, screenshot.ss_height,
+                                       save_image,
+                                       screenshot.ss_albedo_image, screenshot.ss_normal_image);
+                        VkCommandBuffer dcmd = ctx.begin_one_shot();
+                        ss_oidn->record_pre(dcmd);
+                        ctx.end_one_shot(dcmd);
+                        ss_oidn->execute();
+                        VkCommandBuffer dcmd2 = ctx.begin_one_shot();
+                        ss_oidn->record_post(dcmd2);
+                        ctx.end_one_shot(dcmd2);
+                        save_image  = ss_oidn->output_image();
+                        save_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
                     }
 
                     // Generate timestamped filename
@@ -415,7 +415,7 @@ int main(int argc, char* argv[]) {
                                   std::localtime(&t));
                     screenshot.save_png(ctx, save_image, save_layout, buf);
                     glfwSetWindowTitle(window, ("Vulkan RT — Saved " + std::string(buf)).c_str());
-                    frame_index = 0;  // reset accumulation after screenshot resolve
+                    frame_index = 0;
                 }
                 // Don't present during screenshot accumulation — just loop
                 continue;

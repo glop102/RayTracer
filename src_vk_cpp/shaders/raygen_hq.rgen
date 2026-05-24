@@ -3,15 +3,14 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
-// set 0 binding 1 is the f32 display image — not written during accumulation
-layout(set = 0, binding = 7, rgba32f) uniform image2D albedo_image;
-layout(set = 0, binding = 8, rgba32f) uniform image2D normal_image;
 
 struct LightTriangle { vec4 v0_; vec4 v1_; vec4 v2_; vec4 emission_; };
 layout(set = 0, binding = 5, std430) readonly buffer LightTris { LightTriangle d[]; } light_tris;
 
-// Per-pixel f64 accumulation buffer (raw sum of all sample colors)
+// set 1: f64 accumulation buffer + G-buffer images for OIDN denoising
 layout(set = 1, binding = 0, std430) buffer HqAccum { dvec4 d[]; } hq_accum;
+layout(set = 1, binding = 1, rgba32f) uniform image2D albedo_image;
+layout(set = 1, binding = 2, rgba32f) uniform image2D normal_image;
 
 layout(push_constant) uniform Camera {
     vec4     origin;

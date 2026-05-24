@@ -48,9 +48,17 @@ static uint8_t linear_to_srgb_u8(float x) {
 
 // ------------------------------------------------------------------ private helpers
 
+void ScreenshotMode::destroy_gbuf_images() {
+    if (ss_albedo_view)  { vkDestroyImageView(device_, ss_albedo_view, nullptr);            ss_albedo_view  = VK_NULL_HANDLE; }
+    if (ss_albedo_image) { vmaDestroyImage(allocator_, ss_albedo_image, ss_albedo_alloc);   ss_albedo_image = VK_NULL_HANDLE; }
+    if (ss_normal_view)  { vkDestroyImageView(device_, ss_normal_view, nullptr);            ss_normal_view  = VK_NULL_HANDLE; }
+    if (ss_normal_image) { vmaDestroyImage(allocator_, ss_normal_image, ss_normal_alloc);   ss_normal_image = VK_NULL_HANDLE; }
+}
+
 void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
     if (accum_buf.buf)    vmaDestroyBuffer(ctx.allocator, accum_buf.buf,    accum_buf.alloc);
     if (readback_buf.buf) vmaDestroyBuffer(ctx.allocator, readback_buf.buf, readback_buf.alloc);
+    destroy_gbuf_images();
 
     VkDeviceSize accum_size    = (VkDeviceSize)ss_width * ss_height * sizeof(double) * 4;
     VkDeviceSize readback_size = (VkDeviceSize)ss_width * ss_height * 4 * sizeof(float);
@@ -81,7 +89,47 @@ void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
             throw std::runtime_error("HQ readback buffer allocation failed");
     }
 
-    // Rebind accum buffer in the raygen set-1 descriptor
+    // G-buffer images (albedo + normal) for OIDN denoising, always at ss_width×ss_height
+    auto make_gbuf = [&](VkImage& img, VmaAllocation& alloc, VkImageView& view) {
+        VkImageCreateInfo img_ci{};
+        img_ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_ci.imageType     = VK_IMAGE_TYPE_2D;
+        img_ci.format        = VK_FORMAT_R32G32B32A32_SFLOAT;
+        img_ci.extent        = {ss_width, ss_height, 1};
+        img_ci.mipLevels     = 1;
+        img_ci.arrayLayers   = 1;
+        img_ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+        img_ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VmaAllocationCreateInfo ai{};
+        ai.usage = VMA_MEMORY_USAGE_AUTO;
+        if (vmaCreateImage(allocator_, &img_ci, &ai, &img, &alloc, nullptr) != VK_SUCCESS)
+            throw std::runtime_error("Screenshot G-buffer image creation failed");
+
+        VkImageViewCreateInfo view_ci{};
+        view_ci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_ci.image            = img;
+        view_ci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        view_ci.format           = VK_FORMAT_R32G32B32A32_SFLOAT;
+        view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (vkCreateImageView(device_, &view_ci, nullptr, &view) != VK_SUCCESS)
+            throw std::runtime_error("Screenshot G-buffer image view creation failed");
+    };
+    make_gbuf(ss_albedo_image, ss_albedo_alloc, ss_albedo_view);
+    make_gbuf(ss_normal_image, ss_normal_alloc, ss_normal_view);
+
+    // Transition G-buffer images to GENERAL for storage writes
+    VkCommandBuffer gcmd = ctx.begin_one_shot();
+    img_barrier(gcmd, ss_albedo_image, 0, VK_ACCESS_SHADER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+    img_barrier(gcmd, ss_normal_image, 0, VK_ACCESS_SHADER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+    ctx.end_one_shot(gcmd);
+
+    // Rebind accum buffer in the raygen set-1 descriptor (binding 0)
     VkDescriptorBufferInfo buf_info{accum_buf.buf, 0, accum_size};
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w.dstSet          = accum_set;
@@ -91,7 +139,25 @@ void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
     w.pBufferInfo     = &buf_info;
     vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 
-    // Also rebind in the resolve descriptor (binding 0)
+    // Bind G-buffer images to accum set bindings 1 and 2
+    VkDescriptorImageInfo albedo_info{VK_NULL_HANDLE, ss_albedo_view, VK_IMAGE_LAYOUT_GENERAL};
+    VkDescriptorImageInfo normal_info{VK_NULL_HANDLE, ss_normal_view, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet gbuf_writes[2]{};
+    gbuf_writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    gbuf_writes[0].dstSet          = accum_set;
+    gbuf_writes[0].dstBinding      = 1;
+    gbuf_writes[0].descriptorCount = 1;
+    gbuf_writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    gbuf_writes[0].pImageInfo      = &albedo_info;
+    gbuf_writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    gbuf_writes[1].dstSet          = accum_set;
+    gbuf_writes[1].dstBinding      = 2;
+    gbuf_writes[1].descriptorCount = 1;
+    gbuf_writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    gbuf_writes[1].pImageInfo      = &normal_info;
+    vkUpdateDescriptorSets(device_, 2, gbuf_writes, 0, nullptr);
+
+    // Rebind accum buffer in the resolve descriptor (binding 0)
     VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     wr.dstSet          = resolve_set;
     wr.dstBinding      = 0;
@@ -133,22 +199,28 @@ void ScreenshotMode::setup(VkContext& ctx, VkExtent2D extent,
     rt_color_view_  = color_view;
 
     // ---- accum descriptor set layout (set 1 for HQ raygen) ----
+    // binding 0 = f64 accum SSBO, binding 1 = albedo image, binding 2 = normal image
     {
-        VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                                       VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr};
+        VkDescriptorSetLayoutBinding bindings[3]{};
+        bindings[0] = {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr};
+        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr};
+        bindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr};
         VkDescriptorSetLayoutCreateInfo ci{};
         ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        ci.bindingCount = 1;
-        ci.pBindings    = &b;
+        ci.bindingCount = 3;
+        ci.pBindings    = bindings;
         if (vkCreateDescriptorSetLayout(device_, &ci, nullptr, &accum_dsl) != VK_SUCCESS)
             throw std::runtime_error("HQ accum DSL creation failed");
 
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+        VkDescriptorPoolSize pool_sizes[] = {
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  2},
+        };
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_ci.maxSets       = 1;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes    = &ps;
+        pool_ci.poolSizeCount = 2;
+        pool_ci.pPoolSizes    = pool_sizes;
         if (vkCreateDescriptorPool(device_, &pool_ci, nullptr, &accum_pool) != VK_SUCCESS)
             throw std::runtime_error("HQ accum pool creation failed");
 
@@ -553,6 +625,7 @@ void ScreenshotMode::save_png(VkContext& ctx, VkImage src_image, VkImageLayout s
 
 void ScreenshotMode::destroy(VkContext& ctx) {
     destroy_ss_image();
+    destroy_gbuf_images();
 
     if (resolve_pl)     vkDestroyPipeline(device_, resolve_pl, nullptr);
     if (resolve_layout) vkDestroyPipelineLayout(device_, resolve_layout, nullptr);

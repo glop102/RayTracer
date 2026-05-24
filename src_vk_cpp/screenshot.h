@@ -9,14 +9,11 @@ struct VkContext;
 
 // Manages the high-quality offline screenshot pipeline:
 //   - f64 accumulation SSBO (no precision loss from running mean)
-//   - HQ raygen shader (no Russian roulette)
-//   - Resolve compute pass (sum ÷ N → f32 image for denoiser)
+//   - HQ raygen shader (no Russian roulette); writes albedo+normal G-buffers
+//     into ss_albedo_image / ss_normal_image (set=1 bindings 1/2)
+//   - Resolve compute pass (sum ÷ N → f32 image)
+//   - Optional OIDN denoising via a temporary OidnDenoiser in main.cpp
 //   - PNG readback + save
-//
-// When screenshot resolution == swapchain resolution the resolve writes into
-// rt_output.image so the active denoiser can be applied normally.
-// When resolutions differ the resolve writes into a private ss_image and
-// denoising is skipped (custom_res == true signals this to the caller).
 struct ScreenshotMode {
     bool     active       = false;
     bool     custom_res   = false;  // true when screenshot res != swapchain res
@@ -32,7 +29,7 @@ struct ScreenshotMode {
     // f64 per-pixel accumulation buffer (dvec4, row-major, sized to ss_width×ss_height)
     GpuBuffer accum_buf;
 
-    // Descriptor set (set=1) binding the accum buffer for the HQ raygen
+    // Descriptor set (set=1): binding 0 = accum SSBO, 1 = albedo image, 2 = normal image
     VkDescriptorSetLayout accum_dsl  = VK_NULL_HANDLE;
     VkDescriptorPool      accum_pool = VK_NULL_HANDLE;
     VkDescriptorSet       accum_set  = VK_NULL_HANDLE;
@@ -54,17 +51,23 @@ struct ScreenshotMode {
     VkPipelineLayout      resolve_layout = VK_NULL_HANDLE;
     VkPipeline            resolve_pl     = VK_NULL_HANDLE;
 
-    // Custom-resolution output image (only allocated when custom_res == true)
+    // Color output image for custom-res captures (same-res resolves into rt_output.image)
     VkImage       ss_image = VK_NULL_HANDLE;
     VmaAllocation ss_alloc = {};
     VkImageView   ss_view  = VK_NULL_HANDLE;
+
+    // G-buffer images for OIDN denoising — always at ss_width×ss_height
+    VkImage       ss_albedo_image = VK_NULL_HANDLE;
+    VmaAllocation ss_albedo_alloc = {};
+    VkImageView   ss_albedo_view  = VK_NULL_HANDLE;
+    VkImage       ss_normal_image = VK_NULL_HANDLE;
+    VmaAllocation ss_normal_alloc = {};
+    VkImageView   ss_normal_view  = VK_NULL_HANDLE;
 
     // Host-visible staging buffer for PNG readback (sized to ss_width×ss_height)
     GpuBuffer readback_buf;
 
     // Call once after the RT pipeline and output are set up.
-    // rt_output_layout: rt_output.descriptor_set_layout (set 0 for the HQ pipeline).
-    // color_view: rt_output.view used as resolve target for same-res captures.
     void setup(VkContext& ctx, VkExtent2D extent,
                VkDescriptorSetLayout rt_output_layout,
                VkImage color_image, VkImageView color_view);
@@ -75,20 +78,18 @@ struct ScreenshotMode {
                                VkImage color_image, VkImageView color_view);
 
     // Start a new screenshot capture at the given resolution (0 = use swapchain size).
-    // Reallocates per-capture GPU resources if resolution changed since last begin().
     void begin(VkContext& ctx, uint32_t n_samples, uint32_t ss_w = 0, uint32_t ss_h = 0);
 
-    // Record one sample dispatch into cmd (use instead of the regular raygen dispatch).
+    // Record one sample dispatch into cmd.
     void record_sample(VkCommandBuffer cmd, VkDescriptorSet rt_output_set,
                        const RtCameraPush& push);
 
     // After all samples: dispatch resolve compute.
-    // For same-res captures this writes into rt_output.image; for custom-res into ss_image.
+    // Same-res: resolves into rt_output.image. Custom-res: resolves into ss_image.
     void resolve(VkContext& ctx);
 
-    // Readback from the given image (denoiser output or color image) and save PNG.
+    // Readback from the given image and save PNG.
     // layout must be VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL or GENERAL.
-    // For custom-res captures pass ss_image / VK_IMAGE_LAYOUT_GENERAL.
     void save_png(VkContext& ctx, VkImage src_image, VkImageLayout src_layout,
                   const std::string& path);
 
@@ -97,11 +98,12 @@ struct ScreenshotMode {
 private:
     VkDevice     device_         = VK_NULL_HANDLE;
     VmaAllocator allocator_      = VK_NULL_HANDLE;
-    VkImage      rt_color_image_ = VK_NULL_HANDLE;  // rt_output.image (swapchain-sized)
-    VkImageView  rt_color_view_  = VK_NULL_HANDLE;  // rt_output.view
+    VkImage      rt_color_image_ = VK_NULL_HANDLE;
+    VkImageView  rt_color_view_  = VK_NULL_HANDLE;
     PFN_vkCmdTraceRaysKHR pfn_trace_ = nullptr;
 
-    void alloc_capture_buffers(VkContext& ctx);   // (re)allocate accum + readback for ss dims
-    void update_resolve_target(VkImageView view); // rebind resolve descriptor set binding 1
+    void alloc_capture_buffers(VkContext& ctx);
+    void update_resolve_target(VkImageView view);
     void destroy_ss_image();
+    void destroy_gbuf_images();
 };
