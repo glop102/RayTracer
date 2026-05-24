@@ -1,7 +1,10 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <cstdlib>
+#include <ctime>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "vk_context.h"
@@ -16,6 +19,7 @@
 #include "rt_pipeline.h"
 #include "denoiser_oidn.h"
 #include "denoiser_svgf.h"
+#include "screenshot.h"
 
 static constexpr uint32_t WIDTH  = 1280;
 static constexpr uint32_t HEIGHT = 720;
@@ -36,16 +40,29 @@ static void image_barrier(VkCommandBuffer cmd, VkImage image,
 }
 
 int main(int argc, char* argv[]) {
+    // Parse arguments: [--screenshot-rays N] [scene.gltf]
+    uint32_t    screenshot_rays = 1024;
+    const char* gltf_path      = nullptr;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--screenshot-rays" && i + 1 < argc)
+            screenshot_rays = static_cast<uint32_t>(std::stoul(argv[++i]));
+        else if (!gltf_path)
+            gltf_path = argv[i];
+    }
+
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan RT", nullptr, nullptr);
 
     struct AppState {
-        bool         resize_needed = false;
-        Camera*      camera        = nullptr;
-        DenoiserMode denoiser_mode = DenoiserMode::None;
+        bool         resize_needed    = false;
+        Camera*      camera           = nullptr;
+        DenoiserMode denoiser_mode    = DenoiserMode::None;
+        bool         screenshot_requested = false;
+        uint32_t     screenshot_samples   = 1024;
     };
     AppState app;
+    app.screenshot_samples = screenshot_rays;
     glfwSetWindowUserPointer(window, &app);
 
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
@@ -60,11 +77,15 @@ int main(int argc, char* argv[]) {
         if (s->camera) s->camera->on_cursor_pos(x, y);
     });
     glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int mods) {
-        if (action != GLFW_PRESS || !(mods & GLFW_MOD_ALT)) return;
+        if (action != GLFW_PRESS) return;
         auto* s = static_cast<AppState*>(glfwGetWindowUserPointer(w));
-        if      (key == GLFW_KEY_O) s->denoiser_mode = DenoiserMode::OIDN;
-        else if (key == GLFW_KEY_U) s->denoiser_mode = DenoiserMode::SVGF;
-        else if (key == GLFW_KEY_P) s->denoiser_mode = DenoiserMode::None;
+        if (mods & GLFW_MOD_ALT) {
+            if      (key == GLFW_KEY_O) s->denoiser_mode = DenoiserMode::OIDN;
+            else if (key == GLFW_KEY_U) s->denoiser_mode = DenoiserMode::SVGF;
+            else if (key == GLFW_KEY_P) s->denoiser_mode = DenoiserMode::None;
+        } else {
+            if (key == GLFW_KEY_F12) s->screenshot_requested = true;
+        }
     });
     {
         VkContext ctx{window};
@@ -95,12 +116,12 @@ int main(int argc, char* argv[]) {
         std::vector<VkImageView>     tex_views;
         VkSampler                    tex_sampler = VK_NULL_HANDLE;
 
-        if (argc > 1) {
+        if (gltf_path) {
             // ---------------------------------------------------------- GLTF path
             // Pull camera back so the Cornell box is fully visible from outside.
             camera.reset_pose({0.0f, 0.5f, 4.5f}, std::numbers::pi_v<float>, -0.1f);
 
-            gltf.emplace(load_gltf(ctx, argv[1]));
+            gltf.emplace(load_gltf(ctx, gltf_path));
 
             // Reserve for GLTF meshes + area light + 5 Cornell walls so later
             // push_back calls don't reallocate and invalidate TlasInstance pointers.
@@ -262,6 +283,10 @@ int main(int argc, char* argv[]) {
         svgf_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
             rt_output.image, rt_output.albedo_image, rt_output.normal_image);
 
+        ScreenshotMode screenshot;
+        screenshot.setup(ctx, swapchain.extent, rt_output.descriptor_set_layout,
+                         rt_output.image, rt_output.view);
+
         // ================================================================
         // Frame loop
         // ================================================================
@@ -290,11 +315,78 @@ int main(int argc, char* argv[]) {
                     rt_output.image, rt_output.albedo_image, rt_output.normal_image);
                 svgf_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
                     rt_output.image, rt_output.albedo_image, rt_output.normal_image);
+                screenshot.update_color_image(ctx, swapchain.extent, rt_output.image, rt_output.view);
                 frame_index = 0;
                 continue;
             }
 
-            if (camera.consume_moved()) frame_index = 0;
+            if (camera.consume_moved()) {
+                frame_index = 0;
+                if (screenshot.active) screenshot.active = false;  // abort on camera move
+            }
+
+            // ============================================================
+            // Screenshot request: begin accumulation
+            // ============================================================
+            if (app.screenshot_requested && !screenshot.active) {
+                app.screenshot_requested = false;
+                screenshot.begin(ctx, app.screenshot_samples);
+            }
+
+            // ============================================================
+            // SCREENSHOT ACCUMULATION PATH
+            // ============================================================
+            if (screenshot.active) {
+                VkCommandBuffer cmd = ctx.begin_one_shot();
+                RtCameraPush push   = camera.rt_push(swapchain.extent);
+                push.frame_index    = screenshot.samples_done;
+                push.num_light_tris = scene_data.light_count;
+                screenshot.record_sample(cmd, rt_output.descriptor_set, push,
+                                         swapchain.extent.width, swapchain.extent.height);
+                ctx.end_one_shot(cmd);
+
+                screenshot.samples_done++;
+                glfwSetWindowTitle(window,
+                    ("Vulkan RT — Screenshot " +
+                     std::to_string(screenshot.samples_done) + "/" +
+                     std::to_string(screenshot.target) + " samples").c_str());
+
+                if (screenshot.samples_done >= screenshot.target) {
+                    screenshot.active = false;
+                    screenshot.resolve(ctx);
+
+                    IDenoiser* active_denoiser = nullptr;
+                    if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
+                    else if (app.denoiser_mode == DenoiserMode::SVGF) active_denoiser = &svgf_denoiser;
+
+                    VkImage      save_image  = rt_output.image;
+                    VkImageLayout save_layout = VK_IMAGE_LAYOUT_GENERAL;
+
+                    if (active_denoiser) {
+                        VkCommandBuffer dcmd = ctx.begin_one_shot();
+                        active_denoiser->record_pre(dcmd);
+                        ctx.end_one_shot(dcmd);
+                        active_denoiser->execute();
+                        // Upload denoised result to display_image
+                        VkCommandBuffer dcmd2 = ctx.begin_one_shot();
+                        active_denoiser->record_post(dcmd2);
+                        ctx.end_one_shot(dcmd2);
+                        save_image  = active_denoiser->output_image();
+                        save_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    }
+
+                    // Generate timestamped filename
+                    std::time_t t = std::time(nullptr);
+                    char buf[64];
+                    std::strftime(buf, sizeof(buf), "screenshot_%Y-%m-%d_%H-%M-%S.png",
+                                  std::localtime(&t));
+                    screenshot.save_png(ctx, save_image, save_layout, buf);
+                    glfwSetWindowTitle(window, ("Vulkan RT — Saved " + std::string(buf)).c_str());
+                    frame_index = 0;  // reset accumulation after screenshot resolve
+                }
+                // Don't present during screenshot accumulation — just loop
+                continue;
+            }
 
             IDenoiser* active_denoiser = nullptr;
             if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
@@ -440,6 +532,7 @@ int main(int argc, char* argv[]) {
         }
 
         vkDeviceWaitIdle(ctx.device.device);
+        screenshot.destroy(ctx);
         if (gltf) gltf->destroy(ctx.device.device, ctx.allocator);
 
     }  // all Vulkan objects destroyed before glfwDestroyWindow

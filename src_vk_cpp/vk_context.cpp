@@ -58,7 +58,8 @@ VkContext::VkContext(GLFWwindow* window) {
     // in the pNext chain (incompatible with pEnabledFeatures, which we leave NULL).
     VkPhysicalDeviceFeatures2 base_features{};
     base_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    base_features.features.shaderInt64 = VK_TRUE;
+    base_features.features.shaderInt64   = VK_TRUE;
+    base_features.features.shaderFloat64 = VK_TRUE;
 
     // ------------------------------------------------------------------ Physical device
     auto phys_ret = vkb::PhysicalDeviceSelector{instance}

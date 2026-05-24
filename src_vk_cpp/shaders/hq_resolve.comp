@@ -1,0 +1,25 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer HqAccum { dvec4 d[]; } hq_accum;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D out_image;
+
+layout(push_constant) uniform Params {
+    uint sample_count;
+    uint width;
+    uint height;
+} params;
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= params.width || pixel.y >= params.height)
+        return;
+
+    uint idx = pixel.y * params.width + pixel.x;
+    dvec3 sum = hq_accum.d[idx].xyz;
+    vec3 color = vec3(sum / double(params.sample_count));
+
+    imageStore(out_image, ivec2(pixel), vec4(color, 1.0));
+}

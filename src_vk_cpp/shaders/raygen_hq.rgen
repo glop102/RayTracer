@@ -1,0 +1,232 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+// set 0 binding 1 is the f32 display image — not written during accumulation
+layout(set = 0, binding = 7, rgba32f) uniform image2D albedo_image;
+layout(set = 0, binding = 8, rgba32f) uniform image2D normal_image;
+
+struct LightTriangle { vec4 v0_; vec4 v1_; vec4 v2_; vec4 emission_; };
+layout(set = 0, binding = 5, std430) readonly buffer LightTris { LightTriangle d[]; } light_tris;
+
+// Per-pixel f64 accumulation buffer (raw sum of all sample colors)
+layout(set = 1, binding = 0, std430) buffer HqAccum { dvec4 d[]; } hq_accum;
+
+layout(push_constant) uniform Camera {
+    vec4     origin;
+    vec4     lower_left;
+    vec4     horizontal;
+    vec4     vertical;
+    uint     frame_index;   // used as sample index for RNG seeding
+    uint     num_light_tris;
+    float    _pad[2];
+} cam;
+
+struct HitResult {
+    vec3  position;
+    vec3  normal;
+    vec3  diffuse;
+    vec3  specular;
+    vec3  emissive;
+    vec3  absorption;
+    float roughness;
+    float ior;
+    int   hit;
+};
+
+layout(location = 0) rayPayloadEXT HitResult payload;
+layout(location = 1) rayPayloadEXT int shadow_hit;
+
+uint pcg(inout uint state) {
+    state = state * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+float rand01(inout uint rng) {
+    return float(pcg(rng)) * (1.0 / 4294967296.0);
+}
+
+vec3 rand_hemisphere(inout uint rng, vec3 n) {
+    float r1  = rand01(rng);
+    float r2  = rand01(rng);
+    float phi = 6.28318530718 * r1;
+    float st  = sqrt(r2);
+    float ct  = sqrt(1.0 - r2);
+    vec3 up   = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t    = normalize(cross(up, n));
+    vec3 b    = cross(n, t);
+    return normalize(st * cos(phi) * t + st * sin(phi) * b + ct * n);
+}
+
+float ggx_G1(float NdotX, float alpha2) {
+    return 2.0 * NdotX / (NdotX + sqrt(alpha2 + (1.0 - alpha2) * NdotX * NdotX));
+}
+
+vec3 sample_ggx_H(inout uint rng, vec3 N, float alpha) {
+    float u1      = rand01(rng), u2 = rand01(rng);
+    float phi     = 6.28318530718 * u1;
+    float cos_th2 = (1.0 - u2) / (1.0 - u2 + u2 * alpha * alpha);
+    float cos_th  = sqrt(cos_th2);
+    float sin_th  = sqrt(max(0.0, 1.0 - cos_th2));
+    vec3  up      = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3  T       = normalize(cross(up, N));
+    vec3  B       = cross(N, T);
+    return normalize(sin_th * cos(phi) * T + sin_th * sin(phi) * B + cos_th * N);
+}
+
+vec3 sample_direct_light(inout uint rng, vec3 hit_pos, vec3 hit_normal, vec3 mat_color) {
+    float xi = rand01(rng);
+    uint lo = 0u, hi = cam.num_light_tris - 1u;
+    while (lo < hi) {
+        uint mid = (lo + hi) >> 1u;
+        if (light_tris.d[mid].v0_.w < xi) lo = mid + 1u;
+        else hi = mid;
+    }
+    uint li = lo;
+    LightTriangle lt = light_tris.d[li];
+    vec3 v0       = lt.v0_.xyz;
+    vec3 v1       = lt.v1_.xyz;
+    vec3 v2       = lt.v2_.xyz;
+    vec3 emission = lt.emission_.xyz;
+
+    float u = rand01(rng), v = rand01(rng);
+    if (u + v > 1.0) { u = 1.0 - u; v = 1.0 - v; }
+    vec3 light_pos = v0 + u * (v1 - v0) + v * (v2 - v0);
+
+    vec3  e1           = v1 - v0;
+    vec3  e2           = v2 - v0;
+    vec3  light_cross  = cross(e1, e2);
+    float area         = 0.5 * length(light_cross);
+    vec3  light_normal = normalize(light_cross);
+
+    vec3  to_light    = light_pos - hit_pos;
+    float dist        = length(to_light);
+    to_light         /= dist;
+
+    float cos_theta   = dot(hit_normal, to_light);
+    float cos_theta_l = dot(-to_light, light_normal);
+
+    if (cos_theta <= 0.0 || cos_theta_l <= 0.0 || area < 1e-8)
+        return vec3(0.0);
+
+    shadow_hit = 1;
+    traceRayEXT(tlas,
+        gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+        0xFF, 0, 0, 1,
+        hit_pos + hit_normal * 0.001, 0.001,
+        to_light, dist - 0.002,
+        1);
+
+    if (shadow_hit != 0)
+        return vec3(0.0);
+
+    float pdf_weight = lt.emission_.w * cos_theta_l / (dist * dist);
+    return emission * (mat_color / 3.14159265) * cos_theta * pdf_weight;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    uint pixel_idx = gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x;
+
+    uint rng = pixel_idx ^ (cam.frame_index * 2654435761u);
+    pcg(rng); pcg(rng);
+
+    vec2 jitter = vec2(rand01(rng), rand01(rng));
+    vec2 uv = (vec2(pixel) + jitter) / vec2(gl_LaunchSizeEXT.xy);
+    uv.y = 1.0 - uv.y;
+
+    vec3 ray_origin = cam.origin.xyz;
+    vec3 ray_dir    = normalize(cam.lower_left.xyz
+                              + uv.x * cam.horizontal.xyz
+                              + uv.y * cam.vertical.xyz
+                              - ray_origin);
+
+    vec3 throughput  = vec3(1.0);
+    vec3 color       = vec3(0.0);
+    bool add_emissive = true;
+
+    for (int bounce = 0; bounce < 10; bounce++) {
+        payload.hit = 0;
+        traceRayEXT(tlas, 0u, 0xFF, 0, 0, 0,
+                    ray_origin, 0.001, ray_dir, 10000.0, 0);
+
+        if (add_emissive) color += throughput * payload.emissive;
+
+        if (bounce == 0) {
+            vec3 gbuf_albedo = (payload.hit != 0) ? payload.diffuse : vec3(0.0);
+            vec3 gbuf_normal = (payload.hit != 0) ? payload.normal  : vec3(0.0);
+            imageStore(albedo_image, pixel, vec4(gbuf_albedo, 0.0));
+            imageStore(normal_image, pixel, vec4(gbuf_normal, 0.0));
+        }
+
+        if (payload.hit == 0)
+            break;
+
+        if (payload.ior != 0.0) {
+            bool  entering = payload.ior > 0.0;
+            float ior_val  = abs(payload.ior);
+            float n1 = entering ? 1.0 : ior_val;
+            float n2 = entering ? ior_val : 1.0;
+            float eta = n1 / n2;
+
+            vec3  n     = entering ? payload.normal : -payload.normal;
+            float cos_i = dot(-ray_dir, n);
+
+            float r0      = (n1 - n2) / (n1 + n2);
+            r0 *= r0;
+            float fresnel = r0 + (1.0 - r0) * pow(max(0.0, 1.0 - cos_i), 5.0);
+
+            vec3 refracted = refract(ray_dir, n, eta);
+            bool tir       = dot(refracted, refracted) < 0.001;
+
+            if (!entering && any(greaterThan(payload.absorption, vec3(0.0))))
+                throughput *= exp(-payload.absorption * length(payload.position - ray_origin));
+
+            add_emissive = true;
+            if (tir || rand01(rng) < fresnel) {
+                ray_dir    = reflect(ray_dir, n);
+                ray_origin = payload.position + n * 0.001;
+            } else {
+                ray_dir    = normalize(refracted);
+                ray_origin = payload.position - n * 0.001;
+            }
+        } else {
+            add_emissive = (cam.num_light_tris == 0u);
+            if (cam.num_light_tris > 0u)
+                color += throughput * sample_direct_light(rng, payload.position, payload.normal, payload.diffuse);
+
+            float alpha  = max(payload.roughness * payload.roughness, 0.001);
+            float alpha2 = alpha * alpha;
+            vec3  V      = -ray_dir;
+            float NdotV  = max(dot(payload.normal, V), 1e-4);
+
+            vec3  H     = sample_ggx_H(rng, payload.normal, alpha);
+            float NdotH = max(dot(payload.normal, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            vec3  F     = payload.specular + (1.0 - payload.specular) * pow(1.0 - HdotV, 5.0);
+            float F_avg = dot(F, vec3(1.0 / 3.0));
+
+            if (rand01(rng) < F_avg) {
+                vec3  L     = reflect(-V, H);
+                float NdotL = dot(payload.normal, L);
+                float HdotL = max(dot(H, L), 0.0);
+                if (NdotL <= 0.0) break;
+
+                float G = ggx_G1(NdotL, alpha2) * ggx_G1(NdotV, alpha2);
+                throughput *= G * F * HdotL / max(NdotV * NdotH * F_avg, 1e-6);
+                ray_dir    = L;
+            } else {
+                throughput *= payload.diffuse / max(1.0 - F_avg, 1e-6);
+                ray_dir    = rand_hemisphere(rng, payload.normal);
+            }
+
+            ray_origin = payload.position + payload.normal * 0.001;
+        }
+        // No Russian roulette — all bounces contribute
+    }
+
+    // Accumulate raw sum into f64 buffer
+    dvec3 prev = hq_accum.d[pixel_idx].xyz;
+    hq_accum.d[pixel_idx] = dvec4(prev + dvec3(color), 1.0);
+}
