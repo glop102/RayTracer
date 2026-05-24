@@ -456,7 +456,8 @@ int main(int argc, char* argv[]) {
                 if (!frame_opt) { app.resize_needed = true; continue; }
                 auto [image_index, cmd] = *frame_opt;
 
-                VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                VkCommandBufferBeginInfo begin{};
+                begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
                     throw std::runtime_error("Failed to begin command buffer");
 
@@ -501,7 +502,8 @@ int main(int argc, char* argv[]) {
                 if (!frame_opt) { app.resize_needed = true; continue; }
                 auto [image_index, cmd] = *frame_opt;
 
-                VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                VkCommandBufferBeginInfo begin{};
+                begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS)
                     throw std::runtime_error("Failed to begin command buffer");
 

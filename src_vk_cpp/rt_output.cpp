@@ -234,7 +234,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     as_write.accelerationStructureCount = 1;
     as_write.pAccelerationStructures    = &tlas;
 
-    VkWriteDescriptorSet w0{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet w0{};
+    w0.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w0.pNext           = &as_write;
     w0.dstSet          = descriptor_set;
     w0.dstBinding      = 0;
@@ -247,7 +248,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     color_info.imageView   = view;
     color_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet w1{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet w1{};
+    w1.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w1.dstSet          = descriptor_set;
     w1.dstBinding      = 1;
     w1.descriptorCount = 1;
@@ -262,7 +264,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
         buf_infos.push_back({s.buf, 0, s.size});
 
     for (uint32_t i = 0; i < ssbos_.size(); i++) {
-        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        VkWriteDescriptorSet w{};
+        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w.dstSet          = descriptor_set;
         w.dstBinding      = 2 + i;
         w.descriptorCount = 1;
@@ -276,7 +279,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     albedo_info.imageView   = albedo_view;
     albedo_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet wa{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet wa{};
+    wa.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wa.dstSet          = descriptor_set;
     wa.dstBinding      = bind_albedo;
     wa.descriptorCount = 1;
@@ -289,7 +293,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
     normal_info.imageView   = normal_view;
     normal_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet wn{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet wn{};
+    wn.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wn.dstSet          = descriptor_set;
     wn.dstBinding      = bind_normal;
     wn.descriptorCount = 1;
@@ -304,7 +309,8 @@ void RtOutput::write_descriptors(VkAccelerationStructureKHR tlas) {
         for (VkImageView v : tex_views_)
             img_infos.push_back({sampler_, v, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
 
-        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        VkWriteDescriptorSet w{};
+        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w.dstSet          = descriptor_set;
         w.dstBinding      = bind_tex;
         w.descriptorCount = static_cast<uint32_t>(img_infos.size());

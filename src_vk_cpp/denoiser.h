@@ -24,5 +24,5 @@ public:
     virtual void execute() {}
 
     // Record staging→output upload and transition to TRANSFER_SRC_OPTIMAL. No-op for GPU denoisers.
-    virtual void record_post(VkCommandBuffer cmd) {}
+    virtual void record_post(VkCommandBuffer /*cmd*/) {}
 };

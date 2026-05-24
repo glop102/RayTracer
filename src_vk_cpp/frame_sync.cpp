@@ -16,8 +16,10 @@ FrameSync::FrameSync(VkContext& ctx, uint32_t image_count) {
     if (vkAllocateCommandBuffers(device, &alloc, cmd_bufs.data()) != VK_SUCCESS)
         throw std::runtime_error("Command buffer allocation failed");
 
-    VkSemaphoreCreateInfo sem_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    VkFenceCreateInfo     fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkSemaphoreCreateInfo sem_info{};
+    sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    VkFenceCreateInfo fence_info{};
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     render_finished.resize(image_count);

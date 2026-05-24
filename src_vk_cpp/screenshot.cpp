@@ -131,7 +131,8 @@ void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
 
     // Rebind accum buffer in the raygen set-1 descriptor (binding 0)
     VkDescriptorBufferInfo buf_info{accum_buf.buf, 0, accum_size};
-    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet w{};
+    w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w.dstSet          = accum_set;
     w.dstBinding      = 0;
     w.descriptorCount = 1;
@@ -158,7 +159,8 @@ void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
     vkUpdateDescriptorSets(device_, 2, gbuf_writes, 0, nullptr);
 
     // Rebind accum buffer in the resolve descriptor (binding 0)
-    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet wr{};
+    wr.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wr.dstSet          = resolve_set;
     wr.dstBinding      = 0;
     wr.descriptorCount = 1;
@@ -169,7 +171,8 @@ void ScreenshotMode::alloc_capture_buffers(VkContext& ctx) {
 
 void ScreenshotMode::update_resolve_target(VkImageView view) {
     VkDescriptorImageInfo img_info{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
-    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    VkWriteDescriptorSet w{};
+    w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w.dstSet          = resolve_set;
     w.dstBinding      = 1;
     w.descriptorCount = 1;
@@ -320,7 +323,8 @@ void ScreenshotMode::setup(VkContext& ctx, VkExtent2D extent,
                                                          handles.size(), handles.data()) != VK_SUCCESS)
             throw std::runtime_error("HQ vkGetRayTracingShaderGroupHandlesKHR failed");
 
-        VkBufferCreateInfo sbt_ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        VkBufferCreateInfo sbt_ci{};
+        sbt_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         sbt_ci.size  = sbt_size;
         sbt_ci.usage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         VmaAllocationCreateInfo sbt_ai{};
@@ -341,7 +345,8 @@ void ScreenshotMode::setup(VkContext& ctx, VkExtent2D extent,
                 std::memcpy(data + base + i * stride, handles.data() + g * handle_size, handle_size);
         vmaFlushAllocation(ctx.allocator, hq_sbt_alloc, 0, VK_WHOLE_SIZE);
 
-        VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        VkBufferDeviceAddressInfo addr_info{};
+        addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
         addr_info.buffer = hq_sbt_buf;
         VkDeviceAddress sbt_addr = vkGetBufferDeviceAddress(device_, &addr_info);
 
@@ -413,7 +418,7 @@ void ScreenshotMode::setup(VkContext& ctx, VkExtent2D extent,
 
 // ------------------------------------------------------------------ update_swapchain_size
 
-void ScreenshotMode::update_swapchain_size(VkContext& ctx, VkExtent2D new_extent,
+void ScreenshotMode::update_swapchain_size(VkContext& /*ctx*/, VkExtent2D new_extent,
                                             VkImage color_image, VkImageView color_view) {
     active          = false;
     width           = new_extent.width;

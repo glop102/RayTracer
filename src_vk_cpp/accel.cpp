@@ -104,7 +104,7 @@ AccelStructure build_blas(VkContext& ctx, Mesh& mesh, bool opaque) {
     VkAccelerationStructureGeometryKHR geom{};
     geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geom.flags        = opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0u;
+    if (opaque) geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     geom.geometry.triangles = triangles;
 
     uint32_t prim_count = mesh.index_count / 3;
