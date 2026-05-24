@@ -40,12 +40,36 @@ static void image_barrier(VkCommandBuffer cmd, VkImage image,
 }
 
 int main(int argc, char* argv[]) {
-    // Parse arguments: [--screenshot-rays N] [scene.gltf]
+    // Parse arguments: [--screenshot-rays N] [--screenshot-width W] [--screenshot-height H] [scene.gltf]
     uint32_t    screenshot_rays = 1024;
+    uint32_t    screenshot_w    = 0;
+    uint32_t    screenshot_h    = 0;
     const char* gltf_path      = nullptr;
     for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--screenshot-rays" && i + 1 < argc)
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            printf(
+                "Usage: raytracer_vk [OPTIONS] [scene.gltf]\n"
+                "\n"
+                "Options:\n"
+                "  --screenshot-rays N    Samples per pixel for F12 screenshots (default: 1024)\n"
+                "  --screenshot-width W   Screenshot width in pixels (default: window width)\n"
+                "  --screenshot-height H  Screenshot height in pixels (default: window height)\n"
+                "  -h, --help             Show this help message\n"
+                "\n"
+                "Keyboard shortcuts:\n"
+                "  F12        Take screenshot\n"
+                "  Alt+O      Enable OIDN denoiser\n"
+                "  Alt+U      Enable SVGF denoiser\n"
+                "  Alt+P      Disable denoiser\n"
+            );
+            return 0;
+        } else if (arg == "--screenshot-rays" && i + 1 < argc)
             screenshot_rays = static_cast<uint32_t>(std::stoul(argv[++i]));
+        else if (arg == "--screenshot-width" && i + 1 < argc)
+            screenshot_w = static_cast<uint32_t>(std::stoul(argv[++i]));
+        else if (arg == "--screenshot-height" && i + 1 < argc)
+            screenshot_h = static_cast<uint32_t>(std::stoul(argv[++i]));
         else if (!gltf_path)
             gltf_path = argv[i];
     }
@@ -60,9 +84,13 @@ int main(int argc, char* argv[]) {
         DenoiserMode denoiser_mode    = DenoiserMode::None;
         bool         screenshot_requested = false;
         uint32_t     screenshot_samples   = 1024;
+        uint32_t     ss_width             = 0;
+        uint32_t     ss_height            = 0;
     };
     AppState app;
     app.screenshot_samples = screenshot_rays;
+    app.ss_width           = screenshot_w;
+    app.ss_height          = screenshot_h;
     glfwSetWindowUserPointer(window, &app);
 
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
@@ -315,7 +343,7 @@ int main(int argc, char* argv[]) {
                     rt_output.image, rt_output.albedo_image, rt_output.normal_image);
                 svgf_denoiser.setup(ctx, swapchain.extent.width, swapchain.extent.height,
                     rt_output.image, rt_output.albedo_image, rt_output.normal_image);
-                screenshot.update_color_image(ctx, swapchain.extent, rt_output.image, rt_output.view);
+                screenshot.update_swapchain_size(ctx, swapchain.extent, rt_output.image, rt_output.view);
                 frame_index = 0;
                 continue;
             }
@@ -330,19 +358,19 @@ int main(int argc, char* argv[]) {
             // ============================================================
             if (app.screenshot_requested && !screenshot.active) {
                 app.screenshot_requested = false;
-                screenshot.begin(ctx, app.screenshot_samples);
+                screenshot.begin(ctx, app.screenshot_samples, app.ss_width, app.ss_height);
             }
 
             // ============================================================
             // SCREENSHOT ACCUMULATION PATH
             // ============================================================
             if (screenshot.active) {
-                VkCommandBuffer cmd = ctx.begin_one_shot();
-                RtCameraPush push   = camera.rt_push(swapchain.extent);
-                push.frame_index    = screenshot.samples_done;
-                push.num_light_tris = scene_data.light_count;
-                screenshot.record_sample(cmd, rt_output.descriptor_set, push,
-                                         swapchain.extent.width, swapchain.extent.height);
+                VkExtent2D ss_extent = {screenshot.ss_width, screenshot.ss_height};
+                VkCommandBuffer cmd  = ctx.begin_one_shot();
+                RtCameraPush push    = camera.rt_push(ss_extent);
+                push.frame_index     = screenshot.samples_done;
+                push.num_light_tris  = scene_data.light_count;
+                screenshot.record_sample(cmd, rt_output.descriptor_set, push);
                 ctx.end_one_shot(cmd);
 
                 screenshot.samples_done++;
@@ -355,24 +383,29 @@ int main(int argc, char* argv[]) {
                     screenshot.active = false;
                     screenshot.resolve(ctx);
 
-                    IDenoiser* active_denoiser = nullptr;
-                    if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
-                    else if (app.denoiser_mode == DenoiserMode::SVGF) active_denoiser = &svgf_denoiser;
-
-                    VkImage      save_image  = rt_output.image;
+                    VkImage       save_image  = rt_output.image;
                     VkImageLayout save_layout = VK_IMAGE_LAYOUT_GENERAL;
 
-                    if (active_denoiser) {
-                        VkCommandBuffer dcmd = ctx.begin_one_shot();
-                        active_denoiser->record_pre(dcmd);
-                        ctx.end_one_shot(dcmd);
-                        active_denoiser->execute();
-                        // Upload denoised result to display_image
-                        VkCommandBuffer dcmd2 = ctx.begin_one_shot();
-                        active_denoiser->record_post(dcmd2);
-                        ctx.end_one_shot(dcmd2);
-                        save_image  = active_denoiser->output_image();
-                        save_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    if (screenshot.custom_res) {
+                        // Custom resolution: denoisers are swapchain-sized, skip them.
+                        save_image  = screenshot.ss_image;
+                        save_layout = VK_IMAGE_LAYOUT_GENERAL;
+                    } else {
+                        IDenoiser* active_denoiser = nullptr;
+                        if      (app.denoiser_mode == DenoiserMode::OIDN) active_denoiser = &oidn_denoiser;
+                        else if (app.denoiser_mode == DenoiserMode::SVGF) active_denoiser = &svgf_denoiser;
+
+                        if (active_denoiser) {
+                            VkCommandBuffer dcmd = ctx.begin_one_shot();
+                            active_denoiser->record_pre(dcmd);
+                            ctx.end_one_shot(dcmd);
+                            active_denoiser->execute();
+                            VkCommandBuffer dcmd2 = ctx.begin_one_shot();
+                            active_denoiser->record_post(dcmd2);
+                            ctx.end_one_shot(dcmd2);
+                            save_image  = active_denoiser->output_image();
+                            save_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                        }
                     }
 
                     // Generate timestamped filename
