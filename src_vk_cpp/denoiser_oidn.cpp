@@ -2,7 +2,6 @@
 #include "vk_context.h"
 #include <stdexcept>
 #include <cstdio>
-#include <cstring>
 
 static constexpr VkFormat DISPLAY_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
 
@@ -38,44 +37,94 @@ OidnDenoiser::~OidnDenoiser() {
     destroy_resources();
 }
 
-OidnDenoiser::StagingBuf OidnDenoiser::make_staging(VkBufferUsageFlags usage) const {
-    StagingBuf s;
+OidnDenoiser::ExportBuf OidnDenoiser::make_export_buf(VkBufferUsageFlags usage) const {
+    ExportBuf e;
+    size_t buf_size = (size_t)w_ * h_ * 16;  // RGBA32F
+
+    VkExternalMemoryBufferCreateInfo ext_buf_ci{};
+    ext_buf_ci.sType       = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+    ext_buf_ci.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+
     VkBufferCreateInfo buf_ci{};
     buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buf_ci.size  = (VkDeviceSize)w_ * h_ * 16;  // RGBA32F
+    buf_ci.pNext = &ext_buf_ci;
+    buf_ci.size  = (VkDeviceSize)buf_size;
     buf_ci.usage = usage;
+    if (vkCreateBuffer(vk_device_, &buf_ci, nullptr, &e.buf) != VK_SUCCESS)
+        throw std::runtime_error("OIDN export buffer creation failed");
 
-    VmaAllocationCreateInfo alloc_ci{};
-    alloc_ci.usage = VMA_MEMORY_USAGE_AUTO;
-    alloc_ci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkMemoryRequirements mem_req;
+    vkGetBufferMemoryRequirements(vk_device_, e.buf, &mem_req);
 
-    VmaAllocationInfo info{};
-    if (vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci, &s.buf, &s.alloc, &info) != VK_SUCCESS)
-        throw std::runtime_error("OIDN staging buffer creation failed");
-    s.ptr = info.pMappedData;
-    return s;
+    VkPhysicalDeviceMemoryProperties mem_props;
+    vkGetPhysicalDeviceMemoryProperties(physical_device_, &mem_props);
+    uint32_t mem_type_idx = UINT32_MAX;
+    for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
+        if ((mem_req.memoryTypeBits & (1u << i)) &&
+            (mem_props.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            mem_type_idx = i;
+            break;
+        }
+    }
+    if (mem_type_idx == UINT32_MAX)
+        throw std::runtime_error("No device-local memory type for OIDN export buffer");
+
+    VkExportMemoryAllocateInfo export_ai{};
+    export_ai.sType       = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+    export_ai.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+
+    VkMemoryAllocateInfo alloc_ai{};
+    alloc_ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_ai.pNext           = &export_ai;
+    alloc_ai.allocationSize  = mem_req.size;
+    alloc_ai.memoryTypeIndex = mem_type_idx;
+    if (vkAllocateMemory(vk_device_, &alloc_ai, nullptr, &e.mem) != VK_SUCCESS)
+        throw std::runtime_error("OIDN export memory allocation failed");
+
+    vkBindBufferMemory(vk_device_, e.buf, e.mem, 0);
+
+    VkMemoryGetFdInfoKHR fd_info{};
+    fd_info.sType      = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+    fd_info.memory     = e.mem;
+    fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
+    int fd = -1;
+    if (pfn_get_fd_(vk_device_, &fd_info, &fd) != VK_SUCCESS)
+        throw std::runtime_error("vkGetMemoryFdKHR failed");
+
+    // OIDN takes ownership of the fd via hipImportExternalMemory.
+    e.oidn_buf = device_.newBuffer(oidn::ExternalMemoryTypeFlag::OpaqueFD, fd, buf_size);
+    return e;
 }
 
 void OidnDenoiser::destroy_resources() {
-    if (color_stg_.buf  != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, color_stg_.buf,  color_stg_.alloc);
-    if (albedo_stg_.buf != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, albedo_stg_.buf, albedo_stg_.alloc);
-    if (normal_stg_.buf != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, normal_stg_.buf, normal_stg_.alloc);
-    if (output_stg_.buf != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, output_stg_.buf, output_stg_.alloc);
-    color_stg_ = albedo_stg_ = normal_stg_ = output_stg_ = {};
+    // Release OIDN references before freeing the underlying Vulkan memory.
+    color_buf_.oidn_buf  = {};
+    albedo_buf_.oidn_buf = {};
+    normal_buf_.oidn_buf = {};
+    output_buf_.oidn_buf = {};
+
+    auto destroy_buf = [this](ExportBuf& e) {
+        if (e.buf != VK_NULL_HANDLE) vkDestroyBuffer(vk_device_, e.buf, nullptr);
+        if (e.mem != VK_NULL_HANDLE) vkFreeMemory(vk_device_, e.mem, nullptr);
+        e = {};
+    };
+    destroy_buf(color_buf_);
+    destroy_buf(albedo_buf_);
+    destroy_buf(normal_buf_);
+    destroy_buf(output_buf_);
 
     if (display_image_ != VK_NULL_HANDLE) {
         vmaDestroyImage(allocator_, display_image_, display_alloc_);
         display_image_ = VK_NULL_HANDLE;
     }
-
-    color_oidn_buf_ = albedo_oidn_buf_ = normal_oidn_buf_ = output_oidn_buf_ = {};
 }
 
 void OidnDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
                           VkImage color, VkImage albedo, VkImage normal) {
-    vk_device_   = ctx.device.device;
-    allocator_   = ctx.allocator;
+    vk_device_       = ctx.device.device;
+    physical_device_ = ctx.physical_device.physical_device;
+    allocator_       = ctx.allocator;
+    pfn_get_fd_      = ctx.pfn_vkGetMemoryFdKHR;
     w_ = w;  h_ = h;
     color_image_  = color;
     albedo_image_ = albedo;
@@ -101,25 +150,17 @@ void OidnDenoiser::setup(VkContext& ctx, uint32_t w, uint32_t h,
     if (vmaCreateImage(allocator_, &img_ci, &img_ai, &display_image_, &display_alloc_, nullptr) != VK_SUCCESS)
         throw std::runtime_error("OIDN display image creation failed");
 
-    color_stg_  = make_staging(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    albedo_stg_ = make_staging(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    normal_stg_ = make_staging(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    output_stg_ = make_staging(VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-
-    // Allocate OIDN host-pinned buffers (accessible by both CPU and HIP device).
-    // VMA staging buffers hold the GPU readback; we memcpy into these before executing.
-    size_t buf_size = (size_t)w * h * 16;
-    color_oidn_buf_  = device_.newBuffer(buf_size, oidn::Storage::Host);
-    albedo_oidn_buf_ = device_.newBuffer(buf_size, oidn::Storage::Host);
-    normal_oidn_buf_ = device_.newBuffer(buf_size, oidn::Storage::Host);
-    output_oidn_buf_ = device_.newBuffer(buf_size, oidn::Storage::Host);
+    color_buf_  = make_export_buf(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    albedo_buf_ = make_export_buf(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    normal_buf_ = make_export_buf(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    output_buf_ = make_export_buf(VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 
     filter_ = device_.newFilter("RT");
     // pixelByteStride=16: RGBA32F layout — read only RGB, skip A.
-    filter_.setImage("color",  color_oidn_buf_,  oidn::Format::Float3, w, h, 0, 16);
-    filter_.setImage("albedo", albedo_oidn_buf_, oidn::Format::Float3, w, h, 0, 16);
-    filter_.setImage("normal", normal_oidn_buf_, oidn::Format::Float3, w, h, 0, 16);
-    filter_.setImage("output", output_oidn_buf_, oidn::Format::Float3, w, h, 0, 16);
+    filter_.setImage("color",  color_buf_.oidn_buf,  oidn::Format::Float3, w, h, 0, 16);
+    filter_.setImage("albedo", albedo_buf_.oidn_buf, oidn::Format::Float3, w, h, 0, 16);
+    filter_.setImage("normal", normal_buf_.oidn_buf, oidn::Format::Float3, w, h, 0, 16);
+    filter_.setImage("output", output_buf_.oidn_buf, oidn::Format::Float3, w, h, 0, 16);
     filter_.set("hdr", true);
     filter_.set("quality", oidn::Quality::Balanced);
     filter_.commit();
@@ -145,9 +186,9 @@ void OidnDenoiser::record_pre(VkCommandBuffer cmd) {
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent      = {w_, h_, 1};
-    vkCmdCopyImageToBuffer(cmd, color_image_,  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, color_stg_.buf,  1, &region);
-    vkCmdCopyImageToBuffer(cmd, albedo_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, albedo_stg_.buf, 1, &region);
-    vkCmdCopyImageToBuffer(cmd, normal_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, normal_stg_.buf, 1, &region);
+    vkCmdCopyImageToBuffer(cmd, color_image_,  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, color_buf_.buf,  1, &region);
+    vkCmdCopyImageToBuffer(cmd, albedo_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, albedo_buf_.buf, 1, &region);
+    vkCmdCopyImageToBuffer(cmd, normal_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, normal_buf_.buf, 1, &region);
 
     for (auto& b : barriers) {
         b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -161,19 +202,10 @@ void OidnDenoiser::record_pre(VkCommandBuffer cmd) {
 }
 
 void OidnDenoiser::execute() {
-    size_t buf_size = (size_t)w_ * h_ * 16;
-    vmaInvalidateAllocation(allocator_, color_stg_.alloc,  0, VK_WHOLE_SIZE);
-    vmaInvalidateAllocation(allocator_, albedo_stg_.alloc, 0, VK_WHOLE_SIZE);
-    vmaInvalidateAllocation(allocator_, normal_stg_.alloc, 0, VK_WHOLE_SIZE);
-    memcpy(color_oidn_buf_.getData(),  color_stg_.ptr,  buf_size);
-    memcpy(albedo_oidn_buf_.getData(), albedo_stg_.ptr, buf_size);
-    memcpy(normal_oidn_buf_.getData(), normal_stg_.ptr, buf_size);
     filter_.execute();
     const char* err;
     if (device_.getError(err) != oidn::Error::None)
         fprintf(stderr, "OIDN: %s\n", err);
-    memcpy(output_stg_.ptr, output_oidn_buf_.getData(), buf_size);
-    vmaFlushAllocation(allocator_, output_stg_.alloc, 0, VK_WHOLE_SIZE);
 }
 
 void OidnDenoiser::record_post(VkCommandBuffer cmd) {
@@ -185,7 +217,7 @@ void OidnDenoiser::record_post(VkCommandBuffer cmd) {
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent      = {w_, h_, 1};
-    vkCmdCopyBufferToImage(cmd, output_stg_.buf, display_image_,
+    vkCmdCopyBufferToImage(cmd, output_buf_.buf, display_image_,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     img_barrier(cmd, display_image_,

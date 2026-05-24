@@ -32,6 +32,7 @@ struct VkContext {
     PFN_vkCreateRayTracingPipelinesKHR            pfn_vkCreateRayTracingPipelinesKHR            = nullptr;
     PFN_vkGetRayTracingShaderGroupHandlesKHR      pfn_vkGetRayTracingShaderGroupHandlesKHR      = nullptr;
     PFN_vkCmdTraceRaysKHR                         pfn_vkCmdTraceRaysKHR                         = nullptr;
+    PFN_vkGetMemoryFdKHR                          pfn_vkGetMemoryFdKHR                          = nullptr;
 
     explicit VkContext(GLFWwindow* window);
     ~VkContext();

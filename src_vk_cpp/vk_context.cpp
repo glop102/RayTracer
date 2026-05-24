@@ -68,6 +68,7 @@ VkContext::VkContext(GLFWwindow* window) {
         .add_required_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
         .add_required_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
         .add_required_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+        .add_required_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
         .select();
     if (!phys_ret)
         throw std::runtime_error("Physical device selection failed: " + phys_ret.error().message());
@@ -127,6 +128,7 @@ VkContext::VkContext(GLFWwindow* window) {
     LOAD_PFN(vkCreateRayTracingPipelinesKHR);
     LOAD_PFN(vkGetRayTracingShaderGroupHandlesKHR);
     LOAD_PFN(vkCmdTraceRaysKHR);
+    LOAD_PFN(vkGetMemoryFdKHR);
 
     // ------------------------------------------------------------------ RT pipeline properties
     rt_pipeline_props.sType =

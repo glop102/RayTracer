@@ -2,6 +2,7 @@
 #include "denoiser.h"
 #include <OpenImageDenoise/oidn.hpp>
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
 
 class OidnDenoiser final : public IDenoiser {
 public:
@@ -19,9 +20,11 @@ private:
     oidn::DeviceRef device_;
     oidn::FilterRef filter_;
 
-    VkDevice     vk_device_ = VK_NULL_HANDLE;
-    VmaAllocator allocator_ = VK_NULL_HANDLE;
-    uint32_t     w_ = 0, h_ = 0;
+    VkDevice         vk_device_       = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
+    VmaAllocator     allocator_       = VK_NULL_HANDLE;
+    PFN_vkGetMemoryFdKHR pfn_get_fd_  = nullptr;
+    uint32_t         w_ = 0, h_ = 0;
 
     VkImage color_image_  = VK_NULL_HANDLE;
     VkImage albedo_image_ = VK_NULL_HANDLE;
@@ -30,16 +33,14 @@ private:
     VkImage       display_image_ = VK_NULL_HANDLE;
     VmaAllocation display_alloc_ = {};
 
-    // OIDN-managed host buffers (Storage::Host → pinned memory, accessible by HIP and CPU)
-    oidn::BufferRef color_oidn_buf_, albedo_oidn_buf_, normal_oidn_buf_, output_oidn_buf_;
-
-    struct StagingBuf {
-        VkBuffer      buf   = VK_NULL_HANDLE;
-        VmaAllocation alloc = {};
-        void*         ptr   = nullptr;
+    // Device-local buffers exported to OIDN/HIP via OpaqueFD — no CPU copies needed.
+    struct ExportBuf {
+        VkBuffer        buf     = VK_NULL_HANDLE;
+        VkDeviceMemory  mem     = VK_NULL_HANDLE;
+        oidn::BufferRef oidn_buf;
     };
-    StagingBuf color_stg_, albedo_stg_, normal_stg_, output_stg_;
+    ExportBuf color_buf_, albedo_buf_, normal_buf_, output_buf_;
 
-    StagingBuf make_staging(VkBufferUsageFlags usage) const;
-    void       destroy_resources();
+    ExportBuf make_export_buf(VkBufferUsageFlags usage) const;
+    void      destroy_resources();
 };
